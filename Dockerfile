@@ -22,4 +22,4 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV PYTHONUNBUFFERED=1
 
 # Default command (will be overridden by Railway)
-CMD ["python", "backend.py"]
+CMD ["python3", "backend.py"]
