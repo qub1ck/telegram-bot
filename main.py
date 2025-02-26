@@ -39,7 +39,7 @@ def get_token():
 
 
 # Get GitHub Pages URL from environment variables or use a default
-GITHUB_PAGES_URL = os.environ.get("GITHUB_PAGES_URL", "https://qub1ck.github.io/reg-forms")
+GITHUB_PAGES_URL = os.environ.get("GITHUB_PAGES_URL", "https://qub1ck.github.io/telegram-bot")
 
 # This will be set during initialization
 telegram_app = None
