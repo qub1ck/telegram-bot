@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Registration for 2 Children</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        form {
+            background-color: #fff;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            max-width: 400px;
+            width: 100%;
+        }
+
+        input[type="text"], input[type="password"] {
+            width: 100%;
+            padding: 15px;
+            margin-bottom: 20px;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            font-size: 16px;
+            box-sizing: border-box;
+            transition: border-color 0.3s ease;
+        }
+
+        input[type="text"]:focus, input[type="password"]:focus {
+            border-color: #0056b3;
+            outline: none;
+        }
+
+        input::placeholder {
+            color: #999;
+        }
+
+        button {
+            background-color: #0056b3;
+            color: #fff;
+            padding: 15px 20px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            cursor: pointer;
+            width: 100%;
+            transition: background-color 0.3s ease;
+        }
+
+        button:hover {
+            background-color: #004494;
+        }
+
+        @media (max-width: 480px) {
+            body {
+                padding: 10px;
+            }
+
+            form {
+                padding: 20px;
+            }
+
+            input[type="text"], input[type="password"] {
+                padding: 12px;
+            }
+
+            button {
+                padding: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+<form id="registrationForm">
+    <input type="hidden" id="chat_id" name="chat_id" value="">
+    <input type="hidden" id="job_name" name="job_name" value="">
+    <h3>Parent Identifier</h3>
+    <input type="text" id="volumePageNumber" name="volumePageNumber" placeholder="Volume Page Number (PROGENITOR)"
+           required>
+    <input type="password" id="password" name="password" placeholder="Password" required>
+    <h3>Child 1 Identifier</h3>
+    <input type="text" id="child1Identifier" name="child1Identifier" placeholder="Child 1 Identifier" required>
+    <input type="text" id="child1Name" name="child1Name" placeholder="Child 1 Full Name" required>
+    <input type="text" id="child1BirthDate" name="child1BirthDate" placeholder="Child 1 Birth Date (dd/mm/yyyy)"
+           required>
+    <h3>Child 2 Identifier</h3>
+    <input type="text" id="child2Identifier" name="child2Identifier" placeholder="Child 2 Identifier" required>
+    <input type="text" id="child2Name" name="child2Name" placeholder="Child 2 Full Name" required>
+    <input type="text" id="child2BirthDate" name="child2BirthDate" placeholder="Child 2 Birth Date (dd/mm/yyyy)"
+           required>
+    <button type="submit">Confirm</button>
+</form>
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        // Get chat_id and job_name from URL query parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const chatId = urlParams.get('chat_id');
+        const jobName = urlParams.get('job_name');
+
+        if (chatId) {
+            document.getElementById('chat_id').value = chatId;
+        }
+
+        if (jobName) {
+            document.getElementById('job_name').value = jobName;
+        }
+
+        // Handle form submission
+        document.getElementById('registrationForm').addEventListener('submit', function (e) {
+            e.preventDefault();
+
+            const formData = new FormData(this);
+
+            // Use fetch API to submit the form data
+            fetch('', {
+                method: 'POST',
+                body: formData
+            })
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Server response was not OK');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.status === 'success') {
+                        alert('Registration form submitted successfully. The window will now close.');
+                        // Close the form window/tab after successful submission
+                        window.close();
+                    } else {
+                        alert('Registration failed: ' + (data.message || 'Please try again later.'));
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('An error occurred. Please try again later. Error: ' + error.message);
+                });
+        });
+    });
+</script>
+</body>
+</html>
