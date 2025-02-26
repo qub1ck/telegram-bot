@@ -5,3 +5,5 @@ flask-cors==5.0.1
 requests==2.32.3
 sqlalchemy==2.0.38
 playwright==1.50.0
+python-telegram-bot==21.10
+python-telegram-bot[job-queue]==3.11.0
