@@ -27,7 +27,7 @@ gunicorn==22.0.0
 uvicorn==0.29.0
 
 # Development and Debugging
-logging==0.5.1.2
+logging==0.4.9.6
 
 # Security
 certifi==2024.2.2
