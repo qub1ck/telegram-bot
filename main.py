@@ -110,7 +110,7 @@ def start_search():
                     first=0,
                     data={'chat_id': user_id, 'user_choice': original_option, 'user_id': user_id, 'job_name': job_name},
                     name=job_name_to_run,
-                    job_kwargs={'max_instances': 3}
+                    job_kwargs={'max_instances': 2}
                 )
                 logger.error(f"Started background job {job_name_to_run}")
 
@@ -507,7 +507,7 @@ async def restart_active_jobs(app: Application):
             first=5,
             data={'chat_id': user_id, 'user_choice': original_option_text, 'user_id': user_id, 'job_name': job_name},
             name=job_name_to_run,
-            job_kwargs={'max_instances': 3}
+            job_kwargs={'max_instances': 2}
         )
 
 
@@ -540,7 +540,7 @@ async def check_for_new_jobs(context: CallbackContext):
                     first=5,
                     data={'chat_id': user_id, 'user_choice': original_option, 'user_id': user_id, 'job_name': job_name},
                     name=job_name_to_run,
-                    job_kwargs={'max_instances': 3}
+                    job_kwargs={'max_instances': 2}
                 )
                 logger.info(f"Started new background job {job_name_to_run}")
     except Exception as e:
@@ -569,7 +569,7 @@ async def on_startup(app: Application):
         interval=30,  # Check every 30 seconds
         first=5,  # Start checking after 5 seconds
         name="check_for_new_jobs",
-        job_kwargs={'max_instances': 3}
+        job_kwargs={'max_instances': 2}
     )
     logger.info("Added job checker to periodically check for new active jobs")
 
