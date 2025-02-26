@@ -95,4 +95,48 @@ async def check_appointments_async(user_choice: str) -> Optional[List[str]]:
                     
                     await page.wait_for_load_state("networkidle")
                     await page.evaluate('''() => {
-                        const widget =
+                        const widget = document.querySelector('#idBktDefaultServicesContainer')
+                    }''')
+                    
+                    await page.click("#bktContinue")
+                    await page.wait_for_selector("#idListServices", state="visible", timeout=10000)
+                    
+                    option_xpath = f"//div[@class='clsBktServiceName clsHP']/a[contains(text(), '{user_choice}')]"
+                    await page.click(option_xpath)
+                    
+                    # Enhanced availability check
+                    no_hours_message = await page.query_selector("text=No hay horas disponibles")
+                    if no_hours_message:
+                        logger.info("No available dates found.")
+                        return None
+                    
+                    available_dates = await page.evaluate('''() => {
+                        const dates = [];
+                        document.querySelectorAll('.available-date').forEach(dateElement => {
+                            dates.push(dateElement.innerText);
+                        });
+                        return dates;
+                    }''')
+                    
+                    if available_dates:
+                        logger.info(f"Found {len(available_dates)} available dates")
+                        return available_dates
+                    
+                    return None
+                
+                except Exception as page_error:
+                    logger.error(f"Page processing error (Attempt {attempt + 1}): {page_error}")
+                    continue
+                
+                finally:
+                    await browser.close()
+        
+        except Exception as e:
+            logger.error(f"Overall check error (Attempt {attempt + 1}): {e}")
+            continue
+    
+    logger.error("Failed to check appointments after maximum attempts")
+    return None
+
+# Optional: Adding aiofiles for async file operations
+import aiofiles
