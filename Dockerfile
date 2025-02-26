@@ -8,8 +8,8 @@ COPY requirements.txt .
 # Install PostgreSQL dependencies
 RUN apt-get update && apt-get install -y postgresql-client libpq-dev gcc python3-dev
 
-# Install Python dependencies
-RUN pip install -r requirements.txt
+# Install Python dependencies using python -m pip instead of just pip
+RUN python -m pip install -r requirements.txt
 
 # Copy application code
 COPY . .
