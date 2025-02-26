@@ -1,36 +1,40 @@
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, scoped_session
+from sqlalchemy.pool import QueuePool
 import os
 import logging
 import traceback
 
 logger = logging.getLogger(__name__)
 
-# Get database URL from environment with a fallback
-DATABASE_URL = os.environ.get('DATABASE_URL')
-
-# Validate DATABASE_URL
+# Get database URL from environment with validation
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
 if not DATABASE_URL:
     logger.error("DATABASE_URL is not set. Please set it in your environment variables.")
     raise ValueError("DATABASE_URL must be provided")
 
-# Ensure the connection string is in the correct format for SQLAlchemy
+# Ensure proper PostgreSQL connection string
 if DATABASE_URL.startswith('postgres://'):
     DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
 
-# Add SSL mode if not present
+# Add SSL mode and connection pooling parameters
 if '?' not in DATABASE_URL:
     DATABASE_URL += '?sslmode=require'
 
-# Create engine with connection pooling and error handling
 try:
+    # Enhanced connection pooling and error handling
     engine = create_engine(
         DATABASE_URL,
-        pool_pre_ping=True,  # Test connections before using them
-        pool_size=10,  # Number of connections to keep open
-        max_overflow=20  # Number of connections that can be created beyond pool_size
+        poolclass=QueuePool,
+        pool_pre_ping=True,  # Test connections before using
+        pool_size=10,        # Number of connections to keep open
+        max_overflow=20,     # Additional connections if pool is full
+        pool_timeout=30,     # Wait time for getting a connection
+        pool_recycle=1800,   # Recycle connections after 30 minutes
     )
-    SessionLocal = sessionmaker(bind=engine)
+    
+    # Create thread-local session factory
+    SessionLocal = scoped_session(sessionmaker(bind=engine))
 except Exception as e:
     logger.error(f"Database connection error: {e}")
     logger.error(f"DATABASE_URL: {DATABASE_URL}")
@@ -38,31 +42,35 @@ except Exception as e:
     raise
 
 def init_db():
-    """Create all tables in the database."""
+    """Optimized table creation with error handling and indexing."""
     try:
-        # Create tables if they don't exist
         with engine.begin() as conn:
-            # Users table
+            # Users table with additional indexing
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS users (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT UNIQUE NOT NULL,
                     last_interaction TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE INDEX IF NOT EXISTS idx_users_user_id ON users(user_id);
             """))
 
-            # User jobs table
+            # User jobs table with performance optimization
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS user_jobs (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT NOT NULL,
                     job_name TEXT NOT NULL,
                     status TEXT DEFAULT 'pending_form',
-                    FOREIGN KEY(user_id) REFERENCES users(user_id)
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(user_id) REFERENCES users(user_id),
+                    UNIQUE(user_id, job_name)
                 );
+                CREATE INDEX IF NOT EXISTS idx_user_jobs_user_id ON user_jobs(user_id);
+                CREATE INDEX IF NOT EXISTS idx_user_jobs_status ON user_jobs(status);
             """))
 
-            # Form submissions table
+            # Form submissions table with optimized indexing
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS form_submissions (
                     id SERIAL PRIMARY KEY,
@@ -79,11 +87,14 @@ def init_db():
                     child3_name TEXT,
                     child3_birth_date TEXT,
                     job_name TEXT,
+                    submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(user_id) REFERENCES users(user_id)
                 );
+                CREATE INDEX IF NOT EXISTS idx_form_submissions_user_id ON form_submissions(user_id);
+                CREATE INDEX IF NOT EXISTS idx_form_submissions_job_name ON form_submissions(job_name);
             """))
 
-        logger.info("Database tables created or already exist.")
+        logger.info("Database tables created with optimized indexing.")
     except Exception as e:
         logger.error(f"Error initializing database: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
