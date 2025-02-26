@@ -12,6 +12,7 @@ requests==2.32.3
 # Database
 sqlalchemy==2.0.29
 psycopg2-binary==2.9.9
+aiofiles==24.1.0
 
 # Web Automation
 playwright==1.44.0
