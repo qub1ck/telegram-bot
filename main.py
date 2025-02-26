@@ -403,54 +403,74 @@ async def handle_cancel_job(update: Update, context: CallbackContext):
 
 
 async def check_dates_continuously(context: CallbackContext):
-    """Check for available dates in the background."""
+    """Optimized background job for checking appointment dates."""
     job_data = context.job.data
     chat_id = job_data['chat_id']
-    user_choice = job_data['user_choice']  # Original option text (e.g., "INSCRIPCIÓN MENORES LEY36 OPCIÓN 1 HIJO")
+    user_choice = job_data['user_choice']
     user_id = job_data['user_id']
-    job_name = job_data['job_name']  # Formatted job name (e.g., "Maria, 1 HIJO")
+    job_name = job_data['job_name']
 
-    logger.info(f"Running background job for user {chat_id} with choice {user_choice}")
+    logger.info(f"Running background job for user {chat_id}")
 
     try:
-        # Verify job is still active
+        # Lightweight job readiness check
         job_ready = await is_job_ready_to_search(user_id, job_name)
         if not job_ready:
-            logger.info(f"Job {job_name} for user {user_id} is no longer active, stopping search")
+            logger.info(f"Job {job_name} is no longer active")
             context.job.schedule_removal()
             return
 
-        available_dates = await check_appointments_async(user_choice)  # Pass the original option text
+        # Time-boxed appointment checking
+        try:
+            available_dates = await asyncio.wait_for(
+                check_appointments_async(user_choice), 
+                timeout=60  # 1-minute timeout
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Appointment check timed out for {job_name}")
+            return
+
         if available_dates:
-            await context.bot.send_message(chat_id,
-                                           f"Available dates found for {job_name}: {', '.join(available_dates)}")
+            # Consolidated messaging
+            await context.bot.send_message(
+                chat_id, 
+                f"Available dates found for {job_name}: {', '.join(available_dates)}"
+            )
             logger.info(f"Available dates found for user {chat_id}")
+            
+            # Clean up after successful find
             context.job.schedule_removal()
             await remove_user_job(user_id, job_name)
-            # Create a fake Update object to pass to show_options
-            fake_update = Update(update_id=0,
-                                 message=Message(message_id=0, chat=Chat(id=chat_id, type='private'), date=None))
+            
+            # Return to main menu
+            fake_update = Update(
+                update_id=0,
+                message=Message(
+                    message_id=0, 
+                    chat=Chat(id=chat_id, type='private'), 
+                    date=None
+                )
+            )
             await context.bot.send_message(
                 chat_id=chat_id,
                 text="Please choose an option:",
                 reply_markup=await show_options(fake_update, context)
             )
         else:
-            logger.info(f"No available dates found for user {chat_id}")
+            logger.info(f"No available dates for user {chat_id}")
+    
     except Exception as e:
-        logger.error(f"Error in check_dates_continuously for user {chat_id}: {e}")
-        await remove_user_job(user_id, job_name)
-        await context.bot.send_message(chat_id, "The service is currently unavailable. Please try again later.")
-        # Create a fake Update object to pass to show_options
-        fake_update = Update(update_id=0,
-                             message=Message(message_id=0, chat=Chat(id=chat_id, type='private'), date=None))
+        logger.error(f"Background job error for user {chat_id}: {e}")
+        
+        # Error handling with minimal overhead
         await context.bot.send_message(
-            chat_id=chat_id,
-            text="Please choose an option:",
-            reply_markup=await show_options(fake_update, context)
+            chat_id, 
+            "Service temporarily unavailable. Please try again later."
         )
+        
+        # Remove job on persistent errors
+        await remove_user_job(user_id, job_name)
         context.job.schedule_removal()
-
 
 async def handle_check_appointments(update: Update, context: CallbackContext):
     """Handle the callback query for checking appointments."""
@@ -512,39 +532,44 @@ async def restart_active_jobs(app: Application):
 
 
 async def check_for_new_jobs(context: CallbackContext):
-    """Periodically check for new active jobs that need to be started."""
+    """Efficient periodic check for new active jobs."""
     try:
-        logger.info("Checking for new active jobs...")
         active_jobs = await get_all_active_jobs()
+        logger.info(f"Checking {len(active_jobs)} potentially new jobs")
 
+        # Batch processing to reduce individual job overhead
         for job in active_jobs:
             user_id = job["user_id"]
             job_name = job["job_name"]
-
-            # Check if this job is already running
             job_name_to_run = f"check_dates_{user_id}_{job_name}"
+
+            # Quick check to prevent duplicate job launches
             existing_jobs = context.job_queue.get_jobs_by_name(job_name_to_run)
+            if existing_jobs:
+                continue
 
-            if not existing_jobs:
-                # This job is active but not running yet, start it
-                logger.info(f"Found new active job not yet running: {job_name} for user {user_id}")
+            # Extract original option
+            option_part = job_name.split(", ")[-1]
+            original_option = f"INSCRIPCIÓN MENORES LEY36 OPCIÓN {option_part}"
 
-                # Extract the original option from the job name
-                option_part = job_name.split(", ")[-1]
-                original_option = f"INSCRIPCIÓN MENORES LEY36 OPCIÓN {option_part}"
+            # Efficient job scheduling
+            context.job_queue.run_repeating(
+                check_dates_continuously,
+                interval=30,
+                first=5,
+                data={
+                    'chat_id': user_id, 
+                    'user_choice': original_option, 
+                    'user_id': user_id, 
+                    'job_name': job_name
+                },
+                name=job_name_to_run,
+                job_kwargs={'max_instances': 1}  # Prevent multiple instances
+            )
+            logger.info(f"Scheduled job for {job_name}")
 
-                # Start the background job
-                context.job_queue.run_repeating(
-                    check_dates_continuously,
-                    interval=30,
-                    first=5,
-                    data={'chat_id': user_id, 'user_choice': original_option, 'user_id': user_id, 'job_name': job_name},
-                    name=job_name_to_run,
-                    job_kwargs={'max_instances': 2}
-                )
-                logger.info(f"Started new background job {job_name_to_run}")
     except Exception as e:
-        logger.error(f"Error in check_for_new_jobs: {str(e)}")
+        logger.error(f"Error in job checking process: {e}")
 
 
 async def on_startup(app: Application):
