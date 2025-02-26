@@ -107,52 +107,66 @@
     <button type="submit">Confirm</button>
 </form>
 <script>
-    document.addEventListener('DOMContentLoaded', function () {
-        // Get chat_id and job_name from URL query parameters
-        const urlParams = new URLSearchParams(window.location.search);
-        const chatId = urlParams.get('chat_id');
-        const jobName = urlParams.get('job_name');
+document.addEventListener('DOMContentLoaded', function () {
+    const urlParams = new URLSearchParams(window.location.search);
+    const chatId = urlParams.get('chat_id');
+    const jobName = urlParams.get('job_name');
 
-        if (chatId) {
-            document.getElementById('chat_id').value = chatId;
-        }
+    // Validate required parameters
+    if (!chatId || !jobName) {
+        alert('Missing required parameters. Please return to the bot and restart the process.');
+        window.close();
+        return;
+    }
 
-        if (jobName) {
-            document.getElementById('job_name').value = jobName;
-        }
+    document.getElementById('chat_id').value = chatId;
+    document.getElementById('job_name').value = jobName;
 
-        // Handle form submission
-        document.getElementById('registrationForm').addEventListener('submit', function (e) {
-            e.preventDefault();
+    document.getElementById('registrationForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        
+        const formData = new FormData(this);
+        
+        // Disable submit button to prevent multiple submissions
+        const submitButton = this.querySelector('button[type="submit"]');
+        submitButton.disabled = true;
+        submitButton.textContent = 'Submitting...';
 
-            const formData = new FormData(this);
-
-            // Use fetch API to submit the form data
-            fetch('https://scheduler-be.up.railway.app/submit-form', {
-                method: 'POST',
-                body: formData
-            })
-                .then(response => {
-                    if (!response.ok) {
-                        throw new Error('Server response was not OK');
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    if (data.status === 'success') {
-                        alert('Registration form submitted successfully. The window will now close.');
-                        // Close the form window/tab after successful submission
-                        window.close();
-                    } else {
-                        alert('Registration failed: ' + (data.message || 'Please try again later.'));
-                    }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert('An error occurred. Please try again later. Error: ' + error.message);
-                });
+        // Enhanced fetch with comprehensive error handling
+        fetch('https://scheduler-be.up.railway.app/submit-form', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                // Optional: Add any specific headers if needed
+                'Accept': 'application/json'
+            }
+        })
+        .then(response => {
+            // Check for network-level errors
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.status === 'success') {
+                alert('Registration form submitted successfully. The window will now close.');
+                window.close();
+            } else {
+                // Detailed error messaging
+                throw new Error(data.message || 'Unknown error occurred');
+            }
+        })
+        .catch(error => {
+            console.error('Submission Error:', error);
+            alert(`Submission failed: ${error.message}. Please try again or contact support.`);
+            
+            // Re-enable submit button
+            submitButton.disabled = false;
+            submitButton.textContent = 'Confirm';
         });
     });
+});
 </script>
 </body>
 </html>
