@@ -87,9 +87,9 @@ class ProxyManager:
         self.used_proxies.clear()
 
 async def check_appointments_async(user_choice: str) -> Optional[List[str]]:
-    """Enhanced appointment checking with robust proxy handling and error recovery."""
+    """Enhanced appointment checking with proper page flow handling based on actual HTML structure."""
     proxy_manager = ProxyManager()
-    max_attempts = 5  # Increased from 3 to 5
+    max_attempts = 5
     
     for attempt in range(max_attempts):
         proxy_options = None
@@ -105,7 +105,6 @@ async def check_appointments_async(user_choice: str) -> Optional[List[str]]:
                 logger.info(f"Attempt {attempt+1}/{max_attempts}: Trying direct connection (no proxy)")
             
             async with async_playwright() as p:
-                # Configure browser launch options with adaptive retry settings
                 browser_args = {
                     "headless": True,
                 }
@@ -142,27 +141,22 @@ async def check_appointments_async(user_choice: str) -> Optional[List[str]]:
                 # Intercept and log all console messages for debugging
                 page.on("console", lambda msg: logger.debug(f"Browser console {msg.type}: {msg.text}"))
                 
-                # Handle dialogs automatically
-                page.on("dialog", lambda dialog: asyncio.create_task(dialog.accept()))
-                
-                # Enhanced navigation with multiple retry strategies
+                # Navigate to the appointment page with retry mechanism
                 max_navigation_retries = 3
                 for nav_retry in range(max_navigation_retries):
                     try:
                         await page.goto(
                             "https://www.exteriores.gob.es/Consulados/lahabana/es/ServiciosConsulares/Paginas/menorescita.aspx", 
                             timeout=30000,
-                            wait_until="domcontentloaded"  # Less strict than networkidle
+                            wait_until="domcontentloaded"
                         )
-                        
-                        # Wait for page to stabilize
-                        await asyncio.sleep(2)
                         
                         # Verify we've reached the correct page
                         title = await page.title()
                         if "Consulado" not in title and "cita" not in title.lower():
                             logger.warning(f"Page title unexpected: {title}")
                             if nav_retry < max_navigation_retries - 1:
+                                await asyncio.sleep(1)
                                 continue
                             else:
                                 raise Exception("Failed to reach correct page after multiple attempts")
@@ -172,149 +166,184 @@ async def check_appointments_async(user_choice: str) -> Optional[List[str]]:
                         logger.warning(f"Navigation retry {nav_retry+1}/{max_navigation_retries}: {str(e)}")
                         if nav_retry == max_navigation_retries - 1:
                             raise
-                        await asyncio.sleep(1)  # Brief pause before retry
+                        await asyncio.sleep(2)
                 
-                # Click with retry mechanism
-                async def click_with_retry(selector, max_retries=3, description="element"):
-                    for click_retry in range(max_retries):
-                        try:
-                            await page.wait_for_selector(selector, state="visible", timeout=10000)
-                            await page.click(selector)
-                            return True
-                        except Exception as e:
-                            if click_retry == max_retries - 1:
-                                logger.error(f"Failed to click {description} after {max_retries} attempts: {str(e)}")
-                                raise
-                            logger.warning(f"Click retry {click_retry+1}/{max_retries} for {description}: {str(e)}")
-                            await asyncio.sleep(1)
+                # Wait for page to stabilize
+                await asyncio.sleep(2)
                 
-                # Try to find and click the appointment button
+                # Find and click the appointment link
+                logger.info("Looking for appointment link...")
+                appointment_link_clicked = False
+                
+                # Try different selectors for the appointment link
+                appointment_selectors = [
+                    "text=Reservar cita de Menores Ley 36.",
+                    "a:has-text('Reservar cita de Menores')",
+                    "a:has-text('Ley 36')",
+                    "a:has-text('Menores')"
+                ]
+                
+                for selector in appointment_selectors:
+                    try:
+                        await page.wait_for_selector(selector, state="visible", timeout=5000)
+                        await page.click(selector)
+                        logger.info(f"Clicked appointment link with selector: {selector}")
+                        appointment_link_clicked = True
+                        break
+                    except Exception as e:
+                        logger.warning(f"Failed to click with selector {selector}: {str(e)}")
+                
+                if not appointment_link_clicked:
+                    # Take a screenshot and log what's on the page
+                    await page.screenshot(path=f"debug_initial_page_{attempt}.png")
+                    page_content = await page.content()
+                    logger.error(f"Initial page content: {page_content[:1000]}...")
+                    raise Exception("Could not find or click appointment link")
+                
+                # Set up dialog handler now that we're going to interact with the dialog
+                page.on("dialog", lambda dialog: asyncio.create_task(dialog.accept()))
+                
+                # Wait for the captcha page
+                logger.info("Waiting for captcha container...")
+                await page.wait_for_selector("#idCaptchaContainer", state="visible", timeout=15000)
+                
+                # Click the captcha button
+                logger.info("Clicking captcha button...")
+                await page.click("#idCaptchaButton")
+                
+                # Wait for terms dialog to appear
+                logger.info("Waiting for terms dialog to appear...")
                 try:
-                    # First try the text selector
-                    await click_with_retry("text=Reservar cita de Menores Ley 36.", description="appointment button")
-                except Exception:
-                    # Fall back to looking for links with keywords
-                    logger.info("Trying alternative selectors for appointment button")
-                    link_found = False
-                    for selector in ["a:has-text('Reservar')", "a:has-text('cita')", "a:has-text('Menores')"]:
-                        try:
-                            await click_with_retry(selector, description=f"alternative button ({selector})")
-                            link_found = True
-                            break
-                        except Exception:
-                            continue
+                    await page.wait_for_selector("#dialog-confirm", state="visible", timeout=15000)
+                    logger.info("Terms dialog found")
+                except Exception as e:
+                    logger.warning(f"Terms dialog not found: {e}")
+                    # Take a screenshot to see what's on the page
+                    await page.screenshot(path=f"debug_after_captcha_{attempt}.png")
+                    raise Exception("Terms dialog not found after captcha")
+                
+                # Wait a moment to ensure dialog is fully loaded
+                await asyncio.sleep(1)
+                
+                # Now click the ACEPTAR button in the dialog (which is a div with ID bktContinue)
+                logger.info("Clicking ACEPTAR button...")
+                try:
+                    # Try direct selector first
+                    await page.click("#bktContinue")
+                    logger.info("Clicked #bktContinue successfully")
+                except Exception as e:
+                    logger.warning(f"Failed to click #bktContinue directly: {e}")
                     
-                    if not link_found:
-                        raise Exception("Could not find any appropriate appointment links")
+                    # Try JavaScript click as fallback
+                    try:
+                        await page.evaluate('''() => {
+                            const continueBtn = document.querySelector("#bktContinue");
+                            if (continueBtn) {
+                                continueBtn.click();
+                                return true;
+                            }
+                            return false;
+                        }''')
+                        logger.info("Clicked #bktContinue via JavaScript")
+                    except Exception as js_e:
+                        logger.error(f"JavaScript click failed: {js_e}")
+                        raise Exception("Failed to click ACEPTAR button after multiple attempts")
                 
-                # Wait for captcha button with extended timeout
-                try:
-                    await page.wait_for_selector("#idCaptchaButton", state="visible", timeout=15000)
-                    await page.click("#idCaptchaButton")
-                except PlaywrightTimeoutError:
-                    # Try alternative approach if standard captcha button not found
-                    logger.warning("Captcha button not found with standard selector, trying alternatives")
-                    
-                    for alt_captcha_selector in ["button:has-text('Captcha')", "button:has-text('Continuar')", "input[type=button]"]:
-                        try:
-                            await page.wait_for_selector(alt_captcha_selector, state="visible", timeout=5000)
-                            await page.click(alt_captcha_selector)
-                            logger.info(f"Used alternative captcha selector: {alt_captcha_selector}")
-                            break
-                        except Exception:
-                            continue
-                
-                # Wait for page to load with more resilience
-                try:
-                    await page.wait_for_load_state("networkidle", timeout=20000)
-                except PlaywrightTimeoutError:
-                    logger.warning("networkidle timeout, continuing anyway")
-                
-                # Try multiple approaches to find and click the continue button
-                try:
-                    await click_with_retry("#bktContinue", description="continue button")
-                except Exception:
-                    logger.warning("Standard continue button not found, trying alternatives")
-                    for continue_selector in ["button:has-text('Continue')", "button:has-text('Continuar')", "input[type=submit]"]:
-                        try:
-                            await click_with_retry(continue_selector, description=f"alternative continue ({continue_selector})")
-                            break
-                        except Exception:
-                            continue
-                
-                # Wait for services list with resilience
+                # Wait for services list to appear
+                logger.info("Waiting for services list to appear...")
                 try:
                     await page.wait_for_selector("#idListServices", state="visible", timeout=15000)
-                except PlaywrightTimeoutError:
-                    # Try alternatives if standard selector fails
-                    logger.warning("Service list not found with standard selector")
-                    service_found = False
-                    for service_selector in [".service-list", ".services", "div.services-container"]:
-                        try:
-                            await page.wait_for_selector(service_selector, state="visible", timeout=5000)
-                            service_found = True
-                            break
-                        except Exception:
-                            continue
+                    logger.info("Services list found")
+                except Exception as e:
+                    logger.warning(f"Services list not found: {e}")
                     
-                    if not service_found:
-                        screenshot = await page.screenshot(type="jpeg", quality=50)
-                        logger.error(f"Page content: {await page.content()}")
-                        raise Exception("Could not find services list with any selector")
+                    # Try to make services list visible with JavaScript if it exists but is hidden
+                    try:
+                        is_hidden = await page.evaluate('''() => {
+                            const servicesList = document.querySelector("#idListServices");
+                            if (servicesList && servicesList.style.display === "none") {
+                                servicesList.style.display = "block";
+                                return true;
+                            }
+                            return false;
+                        }''')
+                        
+                        if is_hidden:
+                            logger.info("Made services list visible via JavaScript")
+                            # Wait a moment for the display change to take effect
+                            await asyncio.sleep(1)
+                        else:
+                            # Take a screenshot to see what's on the page
+                            await page.screenshot(path=f"debug_no_services_{attempt}.png")
+                            raise Exception("Services list not found and couldn't be made visible")
+                    except Exception as js_e:
+                        logger.error(f"JavaScript visibility toggle failed: {js_e}")
+                        raise Exception("Failed to find or show services list")
                 
-                # Try to find the service option with multiple approaches
-                service_found = False
+                # Now find and click the specific service option
+                logger.info(f"Looking for service option: {user_choice}")
+                service_option_found = False
                 
-                # First try: exact XPath with the provided user_choice
-                option_xpath = f"//div[@class='clsBktServiceName clsHP']/a[contains(text(), '{user_choice}')]"
+                # Based on the HTML, we can see the exact structure for the service links
+                service_selector = f"//div[@class='clsBktServiceName clsHP']/a[contains(text(), '{user_choice}')]"
+                
                 try:
-                    await page.wait_for_selector(option_xpath, timeout=5000)
-                    await page.click(option_xpath)
-                    service_found = True
-                except Exception:
-                    logger.warning(f"Service not found with primary XPath: {option_xpath}")
-                
-                # Second try: Look for keywords in the service name if exact match fails
-                if not service_found:
-                    keywords = ["MENOR", "LEY36", "HIJO", "HIJOS"]
-                    for keyword in keywords:
+                    await page.wait_for_selector(service_selector, state="visible", timeout=10000)
+                    await page.click(service_selector)
+                    logger.info(f"Clicked service option: {user_choice}")
+                    service_option_found = True
+                except Exception as e:
+                    logger.warning(f"Failed to find service with primary selector: {e}")
+                    
+                    # Try alternative selectors if the first one fails
+                    alternative_selectors = [
+                        f"a:has-text('{user_choice}')",
+                        f"a:has-text('OPCIÓN {user_choice.split('OPCIÓN')[1].strip() if 'OPCIÓN' in user_choice else ''}')"
+                    ]
+                    
+                    for alt_selector in alternative_selectors:
                         try:
-                            keyword_xpath = f"//div[contains(@class, 'Service')]/a[contains(text(), '{keyword}')]"
-                            await page.wait_for_selector(keyword_xpath, timeout=3000)
-                            await page.click(keyword_xpath)
-                            service_found = True
-                            logger.info(f"Found service using keyword: {keyword}")
+                            await page.wait_for_selector(alt_selector, state="visible", timeout=5000)
+                            await page.click(alt_selector)
+                            logger.info(f"Clicked service option with alternative selector: {alt_selector}")
+                            service_option_found = True
                             break
                         except Exception:
                             continue
                 
-                if not service_found:
-                    # As a last resort, log available services for debugging
-                    services = await page.evaluate("""
-                        () => {
-                            const services = [];
-                            document.querySelectorAll('div.clsBktServiceName a').forEach(el => {
-                                services.push(el.textContent.trim());
-                            });
-                            return services;
-                        }
-                    """)
-                    logger.error(f"Available services: {services}")
-                    raise Exception(f"Could not find service matching '{user_choice}' or any keywords")
+                if not service_option_found:
+                    # Log available services for debugging
+                    try:
+                        services = await page.evaluate("""
+                            () => {
+                                const services = [];
+                                document.querySelectorAll('.clsBktServiceName a').forEach(el => {
+                                    services.push(el.innerText.trim());
+                                });
+                                return services;
+                            }
+                        """)
+                        logger.error(f"Available services: {services}")
+                    except Exception as e:
+                        logger.error(f"Failed to get services list: {e}")
+                    
+                    raise Exception(f"Could not find service option for '{user_choice}'")
                 
-                # Enhanced availability check with multiple approaches
-                no_hours_available = False
+                # Wait for calendar/availability page
+                logger.info("Waiting for availability information...")
+                await page.wait_for_load_state("networkidle", timeout=15000)
                 
-                # First check: Look for the explicit "No hay horas disponibles" message
+                # Check for availability
+                logger.info("Checking for available dates")
                 try:
                     no_hours_message = await page.query_selector("text=No hay horas disponibles")
-                    if no_hours_message:
-                        no_hours_available = True
-                except Exception:
-                    pass
-                
-                # Second check: Check if there are any available date elements
-                if not no_hours_available:
+                    no_hours_div = await page.query_selector("div:has-text('No hay horas disponibles')")
+                    
+                    if no_hours_message or no_hours_div:
+                        logger.info("No available dates found (explicit message).")
+                        return None
+                    
+                    # Check for available date elements
                     available_dates = await page.evaluate('''() => {
                         const dates = [];
                         document.querySelectorAll('.available-date, [data-available="true"], .calendar-day-available').forEach(dateElement => {
@@ -327,10 +356,13 @@ async def check_appointments_async(user_choice: str) -> Optional[List[str]]:
                         logger.info(f"Found {len(available_dates)} available dates: {available_dates}")
                         return available_dates
                     else:
-                        no_hours_available = True
-                
-                logger.info("No available dates found.")
-                return None
+                        logger.info("No available dates found (no available date elements).")
+                        return None
+                    
+                except Exception as e:
+                    logger.error(f"Error checking availability: {e}")
+                    await page.screenshot(path=f"debug_availability_error_{attempt}.png")
+                    return None  # Return None on error to be safe
                 
         except Exception as e:
             if proxy_options:
@@ -357,18 +389,3 @@ async def check_appointments_async(user_choice: str) -> Optional[List[str]]:
     
     logger.error("Failed to check appointments after maximum attempts")
     return None
-
-# For testing
-if __name__ == "__main__":
-    import sys
-    
-    async def test():
-        choice = "INSCRIPCIÓN MENORES LEY36 OPCIÓN 1 HIJO"
-        if len(sys.argv) > 1:
-            choice = sys.argv[1]
-        
-        logger.info(f"Testing with choice: {choice}")
-        result = await check_appointments_async(choice)
-        logger.info(f"Result: {result}")
-    
-    asyncio.run(test())
