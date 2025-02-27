@@ -107,7 +107,7 @@ def start_search():
                 # Start new job
                 telegram_app.job_queue.run_repeating(
                     check_dates_continuously,
-                    interval=30,
+                    interval=300,
                     first=0,
                     data={'chat_id': user_id, 'user_choice': original_option, 'user_id': user_id, 'job_name': job_name},
                     name=job_name_to_run,
@@ -524,7 +524,7 @@ async def restart_active_jobs(app: Application):
         job_name_to_run = f"check_dates_{user_id}_{job_name}"
         app.job_queue.run_repeating(
             check_dates_continuously,
-            interval=30,
+            interval=300,
             first=5,
             data={'chat_id': user_id, 'user_choice': original_option_text, 'user_id': user_id, 'job_name': job_name},
             name=job_name_to_run,
@@ -556,7 +556,7 @@ async def check_for_new_jobs(context: CallbackContext):
             # Efficient job scheduling
             context.job_queue.run_repeating(
                 check_dates_continuously,
-                interval=30,
+                interval=300,
                 first=5,
                 data={
                     'chat_id': user_id, 
@@ -592,7 +592,7 @@ async def on_startup(app: Application):
     # Add a job to check for new active jobs periodically
     app.job_queue.run_repeating(
         check_for_new_jobs,
-        interval=30,  # Check every 30 seconds
+        interval=300,  # Check every 30 seconds
         first=5,  # Start checking after 5 seconds
         name="check_for_new_jobs",
         job_kwargs={'max_instances': 2}
