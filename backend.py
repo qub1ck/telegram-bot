@@ -188,12 +188,33 @@ def handle_form_submission():
             logger.error(f"Missing parameters: chat_id={chat_id}, job_name={job_name}")
             return jsonify({"status": "error", "message": "Missing required parameters"}), 400
 
-        # Standardize user input extraction
-        user_input = {
-            key.lower().replace(" ", "_"): value 
-            for key, value in data.items() 
-            if key.lower() not in ['chat_id', 'job_name']
+        # Create a mapping for form field names to database column names
+        field_mapping = {
+            'volumePageNumber': 'volume_page_number',
+            'password': 'password',
+            'child1Identifier': 'child1_identifier',
+            'child1Name': 'child1_name',
+            'child1BirthDate': 'child1_birth_date',
+            'child2Identifier': 'child2_identifier',
+            'child2Name': 'child2_name',
+            'child2BirthDate': 'child2_birth_date',
+            'child3Identifier': 'child3_identifier',
+            'child3Name': 'child3_name',
+            'child3BirthDate': 'child3_birth_date',
         }
+        
+        # Transform form data using the mapping
+        user_input = {}
+        for key, value in data.items():
+            if key in field_mapping:
+                user_input[field_mapping[key]] = value
+            elif key.lower() not in ['chat_id', 'job_name']:
+                # For any fields not in our mapping, use the original transformation
+                user_input[key.lower().replace(" ", "_")] = value
+        
+        # Log the transformed data for debugging (excluding password)
+        safe_input = {k: v for k, v in user_input.items() if k != 'password'}
+        logger.info(f"Transformed form data: {safe_input}")
 
         # Quick user upsert to ensure user exists
         run_async(upsert_user(chat_id))
