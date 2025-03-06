@@ -99,6 +99,9 @@
     <input type="text" id="child2Name" name="child2_name" placeholder="Child 2 Full Name" required>
     <input type="text" id="child2BirthDate" name="child2_birth_date" placeholder="Child 2 Birth Date (dd/mm/yyyy)"
            required>
+    <h3>Appointment Preference</h3>
+    <input type="date" id="preferredDate" name="preferred_date" placeholder="Preferred Date (dd/mm/yyyy)" min="<?php echo date('Y-m-d'); ?>">
+    <p class="form-hint">Select your preferred appointment date</p>
     <button type="submit">Confirm</button>
 </form>
 <script>

@@ -336,56 +336,108 @@ async def check_appointments_async(user_choice: str) -> Optional[List[str]]:
                 # Check for availability
                 logger.info("Checking for available dates")
                 try:
-                    no_hours_message = await page.query_selector("div:has-text('No hay horas disponibles')")
+                    no_hours_message = await page.query_selector("text=No hay horas disponibles")
+                    no_hours_div = await page.query_selector("div:has-text('No hay horas disponibles')")
                     
-                    if no_hours_message:
+                    if no_hours_message or no_hours_div:
                         logger.info("No available dates found (explicit message).")
                         return None
                     
-                    # Extract available date elements using a more specific selector that matches the HTML structure
+                    # Check for available date elements
                     available_dates = await page.evaluate('''() => {
                         const dates = [];
-                        // Get the selected date from the header
-                        const dateHeader = document.querySelector('#idDivBktDatetimeSelectedDate');
-                        const selectedDate = dateHeader ? dateHeader.textContent.trim() : "";
-                        
-                        // Look for all time slots
-                        document.querySelectorAll('.clsDivDatetimeSlot').forEach(slot => {
-                            const timeElement = slot.querySelector('.clsDivDatetimeSlotTime');
-                            const freeSlotElement = slot.querySelector('.clsDivDatetimeSlotFree');
-                            
-                            if (timeElement) {
-                                const time = timeElement.textContent.trim();
-                                const slots = freeSlotElement ? freeSlotElement.textContent.trim() : "1 slot";
-                                dates.push(`${selectedDate} - ${time} (${slots})`);
-                            }
+                        document.querySelectorAll('.available-date, [data-available="true"], .calendar-day-available').forEach(dateElement => {
+                            dates.push(dateElement.innerText.trim());
                         });
-                        
                         return dates.filter(d => d && d.length > 0);
                     }''')
-                    
+
+                    # After finding available dates (around line 350):
                     if available_dates and len(available_dates) > 0:
                         logger.info(f"Found {len(available_dates)} available dates: {available_dates}")
+
+                        # If there's a preferred date, try to select it or find the closest
+                        if preferred_date:
+                            try:
+                                # Parse the preferred date string into a datetime object
+                                preferred_datetime = datetime.strptime(preferred_date, "%d/%m/%Y")
+
+                                # Find exact match or closest date
+                                exact_match = None
+                                closest_date = None
+                                min_difference = float('inf')
+
+                                for date_str in available_dates:
+                                    # Extract date part from combined string and parse
+                                    date_part = date_str.split(" - ")[0].strip()
+                                    try:
+                                        # Spanish date format parsing
+                                        for format_str in ["%A %d de %B de %Y", "%d/%m/%Y"]:
+                                            try:
+                                                current_date = datetime.strptime(date_part, format_str)
+                                                break
+                                            except ValueError:
+                                                continue
+                                            
+                                        # Check for exact match
+                                        if current_date.date() == preferred_datetime.date():
+                                            exact_match = date_str
+                                            # Try to select this slot by clicking its link
+                                            # Extract time from date string
+                                            time_part = date_str.split(" - ")[1].split(" ")[0].strip()
+                                            # Click the slot
+                                            slot_selector = f"a[href*='{current_date.strftime('%Y-%m-%d')}/{time_part}']"
+                                            try:
+                                                await page.click(slot_selector)
+                                                logger.info(f"Selected exact preferred date: {date_str}")
+                                                return [f"SELECTED: {date_str}"]
+                                            except Exception as e:
+                                                logger.error(f"Error selecting preferred date: {e}")
+                                                # Continue and return all available dates
+                                                break
+                                        else:
+                                            # Calculate how close this date is to the preferred
+                                            difference = abs((current_date.date() - preferred_datetime.date()).days)
+                                            if difference < min_difference:
+                                                min_difference = difference
+                                                closest_date = date_str
+                                    except Exception as parse_err:
+                                        logger.warning(f"Error parsing date {date_part}: {parse_err}")
+                                        continue
+                                    
+                                # If no exact match but found closest, try to select it
+                                if not exact_match and closest_date:
+                                    try:
+                                        date_part = closest_date.split(" - ")[0].strip()
+                                        time_part = closest_date.split(" - ")[1].split(" ")[0].strip()
+
+                                        # Parse the closest date
+                                        for format_str in ["%A %d de %B de %Y", "%d/%m/%Y"]:
+                                            try:
+                                                closest_datetime = datetime.strptime(date_part, format_str)
+                                                break
+                                            except ValueError:
+                                                continue
+
+                                        # Click the slot
+                                        slot_selector = f"a[href*='{closest_datetime.strftime('%Y-%m-%d')}/{time_part}']"
+                                        await page.click(slot_selector)
+                                        logger.info(f"Selected closest available date: {closest_date}")
+                                        return [f"SELECTED (closest available): {closest_date}"]
+                                    except Exception as e:
+                                        logger.error(f"Error selecting closest date: {e}")
+                                        # Continue and return all available dates
+
+                            except Exception as e:
+                                logger.error(f"Error processing preferred date: {e}")
+                                # Continue and return all available dates without selection
+
+                        # Return all available dates if no selection was made
                         return available_dates
                     else:
-                        # Try a fallback method to find any available slots
-                        fallback_dates = await page.evaluate('''() => {
-                            const dates = [];
-                            // Try direct query for any date/time slots
-                            document.querySelectorAll('a[href^="#selecttime"]').forEach(link => {
-                                const dateTimeParts = link.getAttribute('href').split('/');
-                                if (dateTimeParts.length >= 4) {
-                                    const date = dateTimeParts[2];
-                                    const time = dateTimeParts[3];
-                                    dates.push(`${date} at ${time}`);
-                                }
-                            });
-                            return dates;
-                        }''')
-                        
-                        if fallback_dates and len(fallback_dates) > 0:
-                            logger.info(f"Found {len(fallback_dates)} available dates using fallback method: {fallback_dates}")
-                            return fallback_dates
+                        if available_dates and len(available_dates) > 0:
+                            logger.info(f"Found {len(available_dates)} available dates: {available_dates}")
+                            return available_dates
                         else:
                             logger.info("No available dates found (no available date elements).")
                             return None

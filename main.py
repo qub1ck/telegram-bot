@@ -403,8 +403,6 @@ async def handle_cancel_job(update: Update, context: CallbackContext):
     await query.message.reply_text("Please choose an option:", reply_markup=await show_options(fake_update, context))
 
 
-# In main.py, modify the check_dates_continuously function:
-
 async def check_dates_continuously(context: CallbackContext):
     """Optimized background job for checking appointment dates."""
     job_data = context.job.data
@@ -422,11 +420,25 @@ async def check_dates_continuously(context: CallbackContext):
             logger.info(f"Job {job_name} is no longer active")
             context.job.schedule_removal()
             return
-
+        
+        # Get preferred date for this job if it exists
+        preferred_date = await get_preferred_date(user_id, job_name)
+        
+        # If we don't have a preferred date, check if we need to ask the user
+        if not preferred_date and 'preferred_date_asked' not in job_data:
+            # Ask user for preferred date
+            await context.bot.send_message(
+                chat_id,
+                f"Please provide your preferred appointment date for {job_name} in format DD/MM/YYYY:"
+            )
+            # Mark that we've asked so we don't keep asking
+            job_data['preferred_date_asked'] = True
+            # Continue checking without waiting for response
+        
         # Time-boxed appointment checking
         try:
             available_dates = await asyncio.wait_for(
-                check_appointments_async(user_choice), 
+                check_appointments_async(user_choice, preferred_date), 
                 timeout=60  # 1-minute timeout
             )
         except asyncio.TimeoutError:
@@ -434,15 +446,28 @@ async def check_dates_continuously(context: CallbackContext):
             return
 
         if available_dates and len(available_dates) > 0:
-            # Format the message for better readability
-            formatted_dates = "\n• ".join(available_dates)
+            # Check if a date was automatically selected
+            was_auto_selected = any("SELECTED" in date for date in available_dates)
             
-            # Consolidated messaging
-            await context.bot.send_message(
-                chat_id, 
-                f"✅ AVAILABLE DATES FOUND for {job_name}:\n\n• {formatted_dates}\n\n" +
-                "Please log in to the system as soon as possible to book your appointment."
-            )
+            # Format the message differently depending on whether a date was auto-selected
+            if was_auto_selected:
+                selected_date = next(date for date in available_dates if "SELECTED" in date)
+                formatted_message = (
+                    f"✅ APPOINTMENT BOOKED for {job_name}:\n\n"
+                    f"• {selected_date}\n\n"
+                    "Your appointment has been automatically booked based on your preference."
+                )
+            else:
+                # Format the message for all available dates
+                formatted_dates = "\n• ".join(available_dates)
+                formatted_message = (
+                    f"✅ AVAILABLE DATES FOUND for {job_name}:\n\n"
+                    f"• {formatted_dates}\n\n"
+                    "Please log in to the system as soon as possible to book your appointment."
+                )
+            
+            # Send the appropriate message
+            await context.bot.send_message(chat_id, formatted_message)
             logger.info(f"Available dates found for user {chat_id}")
             
             # Clean up after successful find
@@ -469,15 +494,104 @@ async def check_dates_continuously(context: CallbackContext):
     except Exception as e:
         logger.error(f"Background job error for user {chat_id}: {e}")
         
-        # Error handling with minimal overhead
+        # Error handling with minimal overhead - just send an error message
+        # but keep the job running
         await context.bot.send_message(
             chat_id, 
-            "Service temporarily unavailable. Please try again later."
+            "Service temporarily unavailable. The search will continue automatically."
         )
+
+async def handle_preferred_date(update: Update, context: CallbackContext):
+    """Handle preferred date input from user."""
+    user_id = update.message.from_user.id
+    text = update.message.text.strip()
+    
+    # Check if this looks like a date in format DD/MM/YYYY
+    if not re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', text):
+        await update.message.reply_text(
+            "Please provide your preferred date in format DD/MM/YYYY (e.g., 15/04/2025)"
+        )
+        return
+    
+    # Get active jobs for this user
+    user_jobs = await get_user_jobs(user_id)
+    
+    if not user_jobs:
+        await update.message.reply_text(
+            "You don't have any active appointment searches. Please start a new search first.",
+            reply_markup=await show_options(update, context)
+        )
+        return
+    
+    # If user has multiple jobs, ask which one to update
+    if len(user_jobs) > 1:
+        # Store the date temporarily
+        context.user_data['pending_preferred_date'] = text
         
-        # Remove job on persistent errors
-        await remove_user_job(user_id, job_name)
-        context.job.schedule_removal()
+        # Create an inline keyboard for the user to select which job to update
+        keyboard = [
+            [InlineKeyboardButton(job, callback_data=f"date_{job}")] for job in user_jobs
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            "Please select which appointment to update with this preferred date:",
+            reply_markup=reply_markup
+        )
+    else:
+        # Only one job, update it directly
+        job_name = user_jobs[0]
+        success = await update_preferred_date(user_id, job_name, text)
+        
+        if success:
+            await update.message.reply_text(
+                f"Preferred date for {job_name} updated to {text}. "
+                "I'll try to book this date when it becomes available.",
+                reply_markup=await show_options(update, context)
+            )
+        else:
+            await update.message.reply_text(
+                "Failed to update preferred date. Please try again later.",
+                reply_markup=await show_options(update, context)
+            )
+
+async def handle_preferred_date_job_selection(update: Update, context: CallbackContext):
+    """Handle the callback query for selecting which job to update with preferred date."""
+    query = update.callback_query
+    await query.answer()  # Acknowledge the callback query
+    
+    user_id = query.from_user.id
+    callback_data = query.data
+    
+    if callback_data.startswith("date_"):
+        job_name = callback_data.replace("date_", "")
+        preferred_date = context.user_data.get('pending_preferred_date')
+        
+        if not preferred_date:
+            await query.edit_message_text(
+                "Session expired. Please provide your preferred date again."
+            )
+            return
+        
+        success = await update_preferred_date(user_id, job_name, preferred_date)
+        
+        if success:
+            await query.edit_message_text(
+                f"Preferred date for {job_name} updated to {preferred_date}. "
+                "I'll try to book this date when it becomes available."
+            )
+            
+            # Clear temporary data
+            del context.user_data['pending_preferred_date']
+            
+            # Return to main menu
+            await query.message.reply_text(
+                "Please choose an option:",
+                reply_markup=await show_options(update, context)
+            )
+        else:
+            await query.edit_message_text(
+                "Failed to update preferred date. Please try again later."
+            )
 
 async def handle_check_appointments(update: Update, context: CallbackContext):
     """Handle the callback query for checking appointments."""
@@ -626,9 +740,11 @@ def main():
 
         # Add handlers
         app.add_handler(CommandHandler("start", start))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d{1,2}/\d{1,2}/\d{4}$'), handle_preferred_date))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_option))
         app.add_handler(CallbackQueryHandler(handle_cancel_job, pattern="^cancel_"))
         app.add_handler(CallbackQueryHandler(handle_check_appointments, pattern="^check_"))
+        app.add_handler(CallbackQueryHandler(handle_preferred_date_job_selection, pattern="^date_"))
 
         logger.info("Bot handlers added. Starting bot...")
 

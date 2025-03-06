@@ -46,13 +46,13 @@ async def save_form_submission(user_id, form_data, job_name):
                     child1_identifier, child1_name, child1_birth_date,
                     child2_identifier, child2_name, child2_birth_date,
                     child3_identifier, child3_name, child3_birth_date,
-                    job_name
+                    job_name, preferred_date
                 ) VALUES (
                     :user_id, :volume_page_number, :password,
                     :child1_identifier, :child1_name, :child1_birth_date,
                     :child2_identifier, :child2_name, :child2_birth_date,
                     :child3_identifier, :child3_name, :child3_birth_date,
-                    :job_name
+                    :job_name, :preferred_date
                 )
             """), {
                 "user_id": user_id,
@@ -67,7 +67,8 @@ async def save_form_submission(user_id, form_data, job_name):
                 "child3_identifier": form_data.get("child3_identifier", ""),
                 "child3_name": form_data.get("child3_name", ""),
                 "child3_birth_date": form_data.get("child3_birth_date", ""),
-                "job_name": job_name
+                "job_name": job_name,
+                "preferred_date": form_data.get("preferred_date", "")
             })
 
             # Update job status
@@ -168,3 +169,57 @@ async def get_user_jobs(user_id):
         logger.error(f"Error getting user jobs: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         return []
+
+# Add to bot_users.py
+async def get_preferred_date(user_id, job_name):
+    """Get the preferred date for a job."""
+    try:
+        with SessionLocal() as session:
+            result = session.execute(text("""
+                SELECT preferred_date FROM form_submissions
+                WHERE user_id = :user_id AND job_name = :job_name
+                ORDER BY submitted_at DESC
+                LIMIT 1
+            """), {"user_id": user_id, "job_name": job_name}).fetchone()
+
+            if result and result[0]:
+                return result[0]
+            return None
+    except SQLAlchemyError as e:
+        logger.error(f"Error getting preferred date: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return None
+
+# Add function to update preferred date for existing jobs
+async def update_preferred_date(user_id, job_name, preferred_date):
+    """Update preferred date for an existing job."""
+    try:
+        with SessionLocal() as session:
+            # Check if the job already has a form submission
+            existing = session.execute(text("""
+                SELECT id FROM form_submissions
+                WHERE user_id = :user_id AND job_name = :job_name
+                LIMIT 1
+            """), {"user_id": user_id, "job_name": job_name}).fetchone()
+            
+            if existing:
+                # Update existing record
+                session.execute(text("""
+                    UPDATE form_submissions
+                    SET preferred_date = :preferred_date
+                    WHERE user_id = :user_id AND job_name = :job_name
+                """), {"user_id": user_id, "job_name": job_name, "preferred_date": preferred_date})
+            else:
+                # Create a minimal record
+                session.execute(text("""
+                    INSERT INTO form_submissions (user_id, job_name, preferred_date)
+                    VALUES (:user_id, :job_name, :preferred_date)
+                """), {"user_id": user_id, "job_name": job_name, "preferred_date": preferred_date})
+            
+            session.commit()
+            logger.info(f"Updated preferred date for user {user_id}, job {job_name}")
+            return True
+    except SQLAlchemyError as e:
+        logger.error(f"Error updating preferred date: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return False

@@ -70,7 +70,6 @@ def init_db():
                 CREATE INDEX IF NOT EXISTS idx_user_jobs_status ON user_jobs(status);
             """))
 
-            # Form submissions table with optimized indexing
             conn.execute(text("""
                 CREATE TABLE IF NOT EXISTS form_submissions (
                     id SERIAL PRIMARY KEY,
@@ -87,11 +86,10 @@ def init_db():
                     child3_name TEXT,
                     child3_birth_date TEXT,
                     job_name TEXT,
+                    preferred_date TEXT,  -- Add this field
                     submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(user_id) REFERENCES users(user_id)
                 );
-                CREATE INDEX IF NOT EXISTS idx_form_submissions_user_id ON form_submissions(user_id);
-                CREATE INDEX IF NOT EXISTS idx_form_submissions_job_name ON form_submissions(job_name);
             """))
 
         logger.info("Database tables created with optimized indexing.")
