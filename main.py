@@ -493,13 +493,12 @@ async def check_dates_continuously(context: CallbackContext):
     
     except Exception as e:
         logger.error(f"Background job error for user {chat_id}: {e}")
-        
-        # Error handling with minimal overhead - just send an error message
-        # but keep the job running
+        '''        
         await context.bot.send_message(
             chat_id, 
             "Service temporarily unavailable. The search will continue automatically."
         )
+        '''
 
 async def handle_preferred_date(update: Update, context: CallbackContext):
     """Handle preferred date input from user."""
