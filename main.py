@@ -403,6 +403,8 @@ async def handle_cancel_job(update: Update, context: CallbackContext):
     await query.message.reply_text("Please choose an option:", reply_markup=await show_options(fake_update, context))
 
 
+# In main.py, modify the check_dates_continuously function:
+
 async def check_dates_continuously(context: CallbackContext):
     """Optimized background job for checking appointment dates."""
     job_data = context.job.data
@@ -431,11 +433,15 @@ async def check_dates_continuously(context: CallbackContext):
             logger.warning(f"Appointment check timed out for {job_name}")
             return
 
-        if available_dates:
+        if available_dates and len(available_dates) > 0:
+            # Format the message for better readability
+            formatted_dates = "\n• ".join(available_dates)
+            
             # Consolidated messaging
             await context.bot.send_message(
                 chat_id, 
-                f"Available dates found for {job_name}: {', '.join(available_dates)}"
+                f"✅ AVAILABLE DATES FOUND for {job_name}:\n\n• {formatted_dates}\n\n" +
+                "Please log in to the system as soon as possible to book your appointment."
             )
             logger.info(f"Available dates found for user {chat_id}")
             
