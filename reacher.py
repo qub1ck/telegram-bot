@@ -336,19 +336,31 @@ async def check_appointments_async(user_choice: str) -> Optional[List[str]]:
                 # Check for availability
                 logger.info("Checking for available dates")
                 try:
-                    no_hours_message = await page.query_selector("text=No hay horas disponibles")
-                    no_hours_div = await page.query_selector("div:has-text('No hay horas disponibles')")
+                    no_hours_message = await page.query_selector("div:has-text('No hay horas disponibles')")
                     
-                    if no_hours_message or no_hours_div:
+                    if no_hours_message:
                         logger.info("No available dates found (explicit message).")
                         return None
                     
-                    # Check for available date elements
+                    # Extract available date elements using a more specific selector that matches the HTML structure
                     available_dates = await page.evaluate('''() => {
                         const dates = [];
-                        document.querySelectorAll('.available-date, [data-available="true"], .calendar-day-available').forEach(dateElement => {
-                            dates.push(dateElement.innerText.trim());
+                        // Get the selected date from the header
+                        const dateHeader = document.querySelector('#idDivBktDatetimeSelectedDate');
+                        const selectedDate = dateHeader ? dateHeader.textContent.trim() : "";
+                        
+                        // Look for all time slots
+                        document.querySelectorAll('.clsDivDatetimeSlot').forEach(slot => {
+                            const timeElement = slot.querySelector('.clsDivDatetimeSlotTime');
+                            const freeSlotElement = slot.querySelector('.clsDivDatetimeSlotFree');
+                            
+                            if (timeElement) {
+                                const time = timeElement.textContent.trim();
+                                const slots = freeSlotElement ? freeSlotElement.textContent.trim() : "1 slot";
+                                dates.push(`${selectedDate} - ${time} (${slots})`);
+                            }
                         });
+                        
                         return dates.filter(d => d && d.length > 0);
                     }''')
                     
@@ -356,8 +368,27 @@ async def check_appointments_async(user_choice: str) -> Optional[List[str]]:
                         logger.info(f"Found {len(available_dates)} available dates: {available_dates}")
                         return available_dates
                     else:
-                        logger.info("No available dates found (no available date elements).")
-                        return None
+                        # Try a fallback method to find any available slots
+                        fallback_dates = await page.evaluate('''() => {
+                            const dates = [];
+                            // Try direct query for any date/time slots
+                            document.querySelectorAll('a[href^="#selecttime"]').forEach(link => {
+                                const dateTimeParts = link.getAttribute('href').split('/');
+                                if (dateTimeParts.length >= 4) {
+                                    const date = dateTimeParts[2];
+                                    const time = dateTimeParts[3];
+                                    dates.push(`${date} at ${time}`);
+                                }
+                            });
+                            return dates;
+                        }''')
+                        
+                        if fallback_dates and len(fallback_dates) > 0:
+                            logger.info(f"Found {len(fallback_dates)} available dates using fallback method: {fallback_dates}")
+                            return fallback_dates
+                        else:
+                            logger.info("No available dates found (no available date elements).")
+                            return None
                     
                 except Exception as e:
                     logger.error(f"Error checking availability: {e}")
