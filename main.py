@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import subprocess
 import traceback
 import asyncio
@@ -448,6 +449,7 @@ async def check_dates_continuously(context: CallbackContext):
         if available_dates and len(available_dates) > 0:
             # Check if a date was automatically selected
             was_auto_selected = any("SELECTED" in date for date in available_dates)
+            was_closest = any("CLOSEST AVAILABLE" in date for date in available_dates)
             
             # Format the message differently depending on whether a date was auto-selected
             if was_auto_selected:
@@ -457,6 +459,16 @@ async def check_dates_continuously(context: CallbackContext):
                     f"• {selected_date}\n\n"
                     "Your appointment has been automatically booked based on your preference."
                 )
+            elif was_closest:
+                closest_date = next(date for date in available_dates if "CLOSEST AVAILABLE" in date)
+                other_dates = [d for d in available_dates if "CLOSEST AVAILABLE" not in d]
+                formatted_message = (
+                    f"✅ CLOSEST DATE FOUND for {job_name}:\n\n"
+                    f"• {closest_date}\n\n"
+                    "This is the closest date to your preference. Please log in to book your appointment."
+                )
+                if other_dates:
+                    formatted_message += "\n\nOther available dates:\n• " + "\n• ".join(other_dates)
             else:
                 # Format the message for all available dates
                 formatted_dates = "\n• ".join(available_dates)
@@ -744,7 +756,7 @@ def main():
         app.add_handler(CallbackQueryHandler(handle_cancel_job, pattern="^cancel_"))
         app.add_handler(CallbackQueryHandler(handle_check_appointments, pattern="^check_"))
         app.add_handler(CallbackQueryHandler(handle_preferred_date_job_selection, pattern="^date_"))
-
+        
         logger.info("Bot handlers added. Starting bot...")
 
         # Run the Flask app in a separate thread
