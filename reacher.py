@@ -2,6 +2,7 @@ import asyncio
 import random
 import logging
 import traceback
+from datetime import datetime
 from typing import List, Optional, Dict, Tuple
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 
@@ -86,7 +87,7 @@ class ProxyManager:
         self.proxies.extend(self.used_proxies)
         self.used_proxies.clear()
 
-async def check_appointments_async(user_choice: str) -> Optional[List[str]]:
+async def check_appointments_async(user_choice: str, preferred_date: Optional[str] = None) -> Optional[List[str]]:
     """Enhanced appointment checking with proper page flow handling based on actual HTML structure."""
     proxy_manager = ProxyManager()
     max_attempts = 5
@@ -352,7 +353,6 @@ async def check_appointments_async(user_choice: str) -> Optional[List[str]]:
                         return dates.filter(d => d && d.length > 0);
                     }''')
 
-                    # After finding available dates (around line 350):
                     if available_dates and len(available_dates) > 0:
                         logger.info(f"Found {len(available_dates)} available dates: {available_dates}")
 
@@ -369,9 +369,9 @@ async def check_appointments_async(user_choice: str) -> Optional[List[str]]:
 
                                 for date_str in available_dates:
                                     # Extract date part from combined string and parse
-                                    date_part = date_str.split(" - ")[0].strip()
+                                    date_part = date_str.split(" - ")[0].strip() if " - " in date_str else date_str
                                     try:
-                                        # Spanish date format parsing
+                                        # Try different Spanish date formats
                                         for format_str in ["%A %d de %B de %Y", "%d/%m/%Y"]:
                                             try:
                                                 current_date = datetime.strptime(date_part, format_str)
@@ -383,18 +383,18 @@ async def check_appointments_async(user_choice: str) -> Optional[List[str]]:
                                         if current_date.date() == preferred_datetime.date():
                                             exact_match = date_str
                                             # Try to select this slot by clicking its link
-                                            # Extract time from date string
-                                            time_part = date_str.split(" - ")[1].split(" ")[0].strip()
-                                            # Click the slot
-                                            slot_selector = f"a[href*='{current_date.strftime('%Y-%m-%d')}/{time_part}']"
-                                            try:
-                                                await page.click(slot_selector)
-                                                logger.info(f"Selected exact preferred date: {date_str}")
-                                                return [f"SELECTED: {date_str}"]
-                                            except Exception as e:
-                                                logger.error(f"Error selecting preferred date: {e}")
-                                                # Continue and return all available dates
-                                                break
+                                            if " - " in date_str:
+                                                time_part = date_str.split(" - ")[1].split(" ")[0].strip()
+                                                # Click the slot
+                                                slot_selector = f"a[href*='{current_date.strftime('%Y-%m-%d')}/{time_part}']"
+                                                try:
+                                                    await page.click(slot_selector)
+                                                    logger.info(f"Selected exact preferred date: {date_str}")
+                                                    return [f"SELECTED: {date_str}"]
+                                                except Exception as e:
+                                                    logger.error(f"Error selecting preferred date: {e}")
+                                                    # Continue and return all available dates
+                                                    break
                                         else:
                                             # Calculate how close this date is to the preferred
                                             difference = abs((current_date.date() - preferred_datetime.date()).days)
@@ -408,9 +408,8 @@ async def check_appointments_async(user_choice: str) -> Optional[List[str]]:
                                 # If no exact match but found closest, try to select it
                                 if not exact_match and closest_date:
                                     try:
-                                        date_part = closest_date.split(" - ")[0].strip()
-                                        time_part = closest_date.split(" - ")[1].split(" ")[0].strip()
-
+                                        date_part = closest_date.split(" - ")[0].strip() if " - " in closest_date else closest_date
+                                        
                                         # Parse the closest date
                                         for format_str in ["%A %d de %B de %Y", "%d/%m/%Y"]:
                                             try:
@@ -419,11 +418,16 @@ async def check_appointments_async(user_choice: str) -> Optional[List[str]]:
                                             except ValueError:
                                                 continue
 
-                                        # Click the slot
-                                        slot_selector = f"a[href*='{closest_datetime.strftime('%Y-%m-%d')}/{time_part}']"
-                                        await page.click(slot_selector)
-                                        logger.info(f"Selected closest available date: {closest_date}")
-                                        return [f"SELECTED (closest available): {closest_date}"]
+                                        # Try to click the date if it has a time component
+                                        if " - " in closest_date:
+                                            time_part = closest_date.split(" - ")[1].split(" ")[0].strip()
+                                            slot_selector = f"a[href*='{closest_datetime.strftime('%Y-%m-%d')}/{time_part}']"
+                                            await page.click(slot_selector)
+                                            logger.info(f"Selected closest available date: {closest_date}")
+                                            return [f"SELECTED (closest available): {closest_date}"]
+                                        else:
+                                            # Just return the date if we can't select it
+                                            return [f"CLOSEST AVAILABLE: {closest_date}"] + available_dates
                                     except Exception as e:
                                         logger.error(f"Error selecting closest date: {e}")
                                         # Continue and return all available dates
@@ -435,12 +439,8 @@ async def check_appointments_async(user_choice: str) -> Optional[List[str]]:
                         # Return all available dates if no selection was made
                         return available_dates
                     else:
-                        if available_dates and len(available_dates) > 0:
-                            logger.info(f"Found {len(available_dates)} available dates: {available_dates}")
-                            return available_dates
-                        else:
-                            logger.info("No available dates found (no available date elements).")
-                            return None
+                        logger.info("No available dates found (no available date elements).")
+                        return None
                     
                 except Exception as e:
                     logger.error(f"Error checking availability: {e}")
