@@ -79,6 +79,29 @@
                 padding: 12px;
             }
         }
+
+        input[type="text"], input[type="password"], input[type="date"] {
+            width: 100%;
+            padding: 15px;
+            margin-bottom: 20px;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            font-size: 16px;
+            box-sizing: border-box;
+            transition: border-color 0.3s ease;
+        }
+
+        input[type="text"]:focus, input[type="password"]:focus, input[type="date"]:focus {
+            border-color: #0056b3;
+            outline: none;
+        }
+
+        .form-hint {
+            color: #666;
+            font-size: 14px;
+            margin-top: -15px;
+            margin-bottom: 20px;
+        }
     </style>
 </head>
 <body>
@@ -100,71 +123,71 @@
     <input type="text" id="child2BirthDate" name="child2_birth_date" placeholder="Child 2 Birth Date (dd/mm/yyyy)"
            required>
     <h3>Appointment Preference</h3>
-    <input type="date" id="preferredDate" name="preferred_date" placeholder="Preferred Date (dd/mm/yyyy)" min="<?php echo date('Y-m-d'); ?>">
+    <input type="date" id="preferredDate" name="preferred_date" required>
     <p class="form-hint">Select your preferred appointment date</p>
     <button type="submit">Confirm</button>
 </form>
 <script>
-document.addEventListener('DOMContentLoaded', function () {
-    const urlParams = new URLSearchParams(window.location.search);
-    const chatId = urlParams.get('chat_id');
-    const jobName = urlParams.get('job_name');
+    document.addEventListener('DOMContentLoaded', function () {
+        const urlParams = new URLSearchParams(window.location.search);
+        const chatId = urlParams.get('chat_id');
+        const jobName = urlParams.get('job_name');
 
-    // Validate required parameters
-    if (!chatId || !jobName) {
-        alert('Missing required parameters. Please return to the bot and restart the process.');
-        window.close();
-        return;
-    }
+        // Validate required parameters
+        if (!chatId || !jobName) {
+            alert('Missing required parameters. Please return to the bot and restart the process.');
+            window.close();
+            return;
+        }
 
-    document.getElementById('chat_id').value = chatId;
-    document.getElementById('job_name').value = jobName;
+        document.getElementById('chat_id').value = chatId;
+        document.getElementById('job_name').value = jobName;
 
-    document.getElementById('registrationForm').addEventListener('submit', function (e) {
-        e.preventDefault();
-        
-        const formData = new FormData(this);
-        
-        // Disable submit button to prevent multiple submissions
-        const submitButton = this.querySelector('button[type="submit"]');
-        submitButton.disabled = true;
-        submitButton.textContent = 'Submitting...';
+        document.getElementById('registrationForm').addEventListener('submit', function (e) {
+            e.preventDefault();
 
-        // Enhanced fetch with comprehensive error handling
-        fetch('https://scheduler-be.up.railway.app/submit-form', {
-            method: 'POST',
-            body: formData,
-            headers: {
-                // Optional: Add any specific headers if needed
-                'Accept': 'application/json'
-            }
-        })
-        .then(response => {
-            // Check for network-level errors
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            return response.json();
-        })
-        .then(data => {
-            if (data.status === 'success') {
-                alert('Registration form submitted successfully. The window will now close.');
-                window.close();
-            } else {
-                // Detailed error messaging
-                throw new Error(data.message || 'Unknown error occurred');
-            }
-        })
-        .catch(error => {
-            console.error('Submission Error:', error);
-            alert(`Submission failed: ${error.message}. Please try again or contact support.`);
-            
-            // Re-enable submit button
-            submitButton.disabled = false;
-            submitButton.textContent = 'Confirm';
+            const formData = new FormData(this);
+
+            // Disable submit button to prevent multiple submissions
+            const submitButton = this.querySelector('button[type="submit"]');
+            submitButton.disabled = true;
+            submitButton.textContent = 'Submitting...';
+
+            // Enhanced fetch with comprehensive error handling
+            fetch('https://scheduler-be.up.railway.app/submit-form', {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    // Optional: Add any specific headers if needed
+                    'Accept': 'application/json'
+                }
+            })
+                .then(response => {
+                    // Check for network-level errors
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.status === 'success') {
+                        alert('Registration form submitted successfully. The window will now close.');
+                        window.close();
+                    } else {
+                        // Detailed error messaging
+                        throw new Error(data.message || 'Unknown error occurred');
+                    }
+                })
+                .catch(error => {
+                    console.error('Submission Error:', error);
+                    alert(`Submission failed: ${error.message}. Please try again or contact support.`);
+
+                    // Re-enable submit button
+                    submitButton.disabled = false;
+                    submitButton.textContent = 'Confirm';
+                });
         });
     });
-});
 </script>
 </body>
 </html>
