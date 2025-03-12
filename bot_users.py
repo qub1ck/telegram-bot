@@ -176,25 +176,18 @@ async def get_preferred_date(user_id, job_name):
         logger.error(f"Traceback: {traceback.format_exc()}")
         return None
 
-# Add to bot_users.py
-async def get_preferred_date(user_id, job_name):
-    """Get the preferred date for a job."""
+async def get_user_jobs(user_id):
+    """Get all jobs for a user."""
     try:
         with SessionLocal() as session:
-            result = session.execute(text("""
-                SELECT preferred_date FROM form_submissions
-                WHERE user_id = :user_id AND job_name = :job_name
-                ORDER BY submitted_at DESC
-                LIMIT 1
-            """), {"user_id": user_id, "job_name": job_name}).fetchone()
-
-            if result and result[0]:
-                return result[0]
-            return None
+            results = session.execute(text("""
+                SELECT job_name FROM user_jobs WHERE user_id = :user_id
+            """), {"user_id": user_id}).fetchall()
+            return [row[0] for row in results]
     except SQLAlchemyError as e:
-        logger.error(f"Error getting preferred date: {e}")
+        logger.error(f"Error getting user jobs: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
-        return None
+        return []
 
 async def update_preferred_date(user_id, job_name, preferred_date):
     """Update preferred date for an existing job."""
