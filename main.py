@@ -9,7 +9,8 @@ from telegram import Update, ReplyKeyboardMarkup, Message, Chat, InlineKeyboardB
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, CallbackQueryHandler
 from bot_users import (
     upsert_user, add_user_job, remove_user_job, get_user_jobs,
-    initialize_db, get_all_active_jobs, is_job_ready_to_search
+    initialize_db, get_all_active_jobs, is_job_ready_to_search,
+    get_preferred_date, update_preferred_date
 )
 from reacher import check_appointments_async
 from dotenv import load_dotenv
@@ -332,7 +333,8 @@ async def handle_option(update: Update, context: CallbackContext):
             form_url = f"{GITHUB_PAGES_URL}/{form_option}_option.html?chat_id={chat_id}&job_name={job_name}"
             keyboard = [[InlineKeyboardButton("Fill Registration Form", url=form_url)]]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text(f"Please fill out the registration form to start searching for appointments:",
+            await update.message.reply_text(
+                f"Please fill out the registration form to start searching for appointments:",
                 reply_markup=reply_markup
             )
 
@@ -421,25 +423,39 @@ async def check_dates_continuously(context: CallbackContext):
             logger.info(f"Job {job_name} is no longer active")
             context.job.schedule_removal()
             return
-        
+
         # Get preferred date for this job if it exists
         preferred_date = await get_preferred_date(user_id, job_name)
-        
+
         # If we don't have a preferred date, check if we need to ask the user
         if not preferred_date and 'preferred_date_asked' not in job_data:
-            # Ask user for preferred date
-            await context.bot.send_message(
-                chat_id,
-                f"Please provide your preferred appointment date for {job_name} in format DD/MM/YYYY:"
-            )
-            # Mark that we've asked so we don't keep asking
-            job_data['preferred_date_asked'] = True
-            # Continue checking without waiting for response
-        
+            # Determine form type from job name
+            form_option = None
+            if "1 HIJO" in job_name:
+                form_option = "first"
+            elif "2 HIJOS" in job_name:
+                form_option = "second"
+            elif "3 HIJOS" in job_name:
+                form_option = "third"
+
+            if form_option:
+                form_url = f"{GITHUB_PAGES_URL}/{form_option}_option.html?chat_id={chat_id}&job_name={job_name}&prefill=true"
+                keyboard = [[InlineKeyboardButton("Set Preferred Date", url=form_url)]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
+                await context.bot.send_message(
+                    chat_id,
+                    f"Please set your preferred appointment date for {job_name}:",
+                    reply_markup=reply_markup
+                )
+
+                # Mark that we've asked so we don't keep asking
+                job_data['preferred_date_asked'] = True
+
         # Time-boxed appointment checking
         try:
             available_dates = await asyncio.wait_for(
-                check_appointments_async(user_choice, preferred_date), 
+                check_appointments_async(user_choice, preferred_date),
                 timeout=60  # 1-minute timeout
             )
         except asyncio.TimeoutError:
@@ -450,7 +466,7 @@ async def check_dates_continuously(context: CallbackContext):
             # Check if a date was automatically selected
             was_auto_selected = any("SELECTED" in date for date in available_dates)
             was_closest = any("CLOSEST AVAILABLE" in date for date in available_dates)
-            
+
             # Format the message differently depending on whether a date was auto-selected
             if was_auto_selected:
                 selected_date = next(date for date in available_dates if "SELECTED" in date)
@@ -477,21 +493,21 @@ async def check_dates_continuously(context: CallbackContext):
                     f"• {formatted_dates}\n\n"
                     "Please log in to the system as soon as possible to book your appointment."
                 )
-            
+
             # Send the appropriate message
             await context.bot.send_message(chat_id, formatted_message)
             logger.info(f"Available dates found for user {chat_id}")
-            
+
             # Clean up after successful find
             context.job.schedule_removal()
             await remove_user_job(user_id, job_name)
-            
+
             # Return to main menu
             fake_update = Update(
                 update_id=0,
                 message=Message(
-                    message_id=0, 
-                    chat=Chat(id=chat_id, type='private'), 
+                    message_id=0,
+                    chat=Chat(id=chat_id, type='private'),
                     date=None
                 )
             )
@@ -502,7 +518,7 @@ async def check_dates_continuously(context: CallbackContext):
             )
         else:
             logger.info(f"No available dates for user {chat_id}")
-    
+
     except Exception as e:
         logger.error(f"Background job error for user {chat_id}: {e}")
         '''        
@@ -512,33 +528,34 @@ async def check_dates_continuously(context: CallbackContext):
         )
         '''
 
+
 async def handle_preferred_date(update: Update, context: CallbackContext):
     """Handle preferred date input from user."""
     user_id = update.message.from_user.id
     text = update.message.text.strip()
-    
+
     # Check if this looks like a date in format DD/MM/YYYY
     if not re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', text):
         await update.message.reply_text(
             "Please provide your preferred date in format DD/MM/YYYY (e.g., 15/04/2025)"
         )
         return
-    
+
     # Get active jobs for this user
     user_jobs = await get_user_jobs(user_id)
-    
+
     if not user_jobs:
         await update.message.reply_text(
             "You don't have any active appointment searches. Please start a new search first.",
             reply_markup=await show_options(update, context)
         )
         return
-    
+
     # If user has multiple jobs, ask which one to update
     if len(user_jobs) > 1:
         # Store the date temporarily
         context.user_data['pending_preferred_date'] = text
-        
+
         # Create an inline keyboard for the user to select which job to update
         keyboard = [
             [InlineKeyboardButton(job, callback_data=f"date_{job}")] for job in user_jobs
@@ -552,7 +569,7 @@ async def handle_preferred_date(update: Update, context: CallbackContext):
         # Only one job, update it directly
         job_name = user_jobs[0]
         success = await update_preferred_date(user_id, job_name, text)
-        
+
         if success:
             await update.message.reply_text(
                 f"Preferred date for {job_name} updated to {text}. "
@@ -565,35 +582,36 @@ async def handle_preferred_date(update: Update, context: CallbackContext):
                 reply_markup=await show_options(update, context)
             )
 
+
 async def handle_preferred_date_job_selection(update: Update, context: CallbackContext):
     """Handle the callback query for selecting which job to update with preferred date."""
     query = update.callback_query
     await query.answer()  # Acknowledge the callback query
-    
+
     user_id = query.from_user.id
     callback_data = query.data
-    
+
     if callback_data.startswith("date_"):
         job_name = callback_data.replace("date_", "")
         preferred_date = context.user_data.get('pending_preferred_date')
-        
+
         if not preferred_date:
             await query.edit_message_text(
                 "Session expired. Please provide your preferred date again."
             )
             return
-        
+
         success = await update_preferred_date(user_id, job_name, preferred_date)
-        
+
         if success:
             await query.edit_message_text(
                 f"Preferred date for {job_name} updated to {preferred_date}. "
                 "I'll try to book this date when it becomes available."
             )
-            
+
             # Clear temporary data
             del context.user_data['pending_preferred_date']
-            
+
             # Return to main menu
             await query.message.reply_text(
                 "Please choose an option:",
@@ -603,6 +621,38 @@ async def handle_preferred_date_job_selection(update: Update, context: CallbackC
             await query.edit_message_text(
                 "Failed to update preferred date. Please try again later."
             )
+
+
+async def handle_set_date_job_selection(update: Update, context: CallbackContext):
+    """Handle the callback for selecting which job to set a date for."""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    callback_data = query.data
+
+    if callback_data.startswith("setdate_"):
+        job_name = callback_data.replace("setdate_", "")
+
+        # Determine form type from job name
+        form_option = None
+        if "1 HIJO" in job_name:
+            form_option = "first"
+        elif "2 HIJOS" in job_name:
+            form_option = "second"
+        elif "3 HIJOS" in job_name:
+            form_option = "third"
+
+        if form_option:
+            form_url = f"{GITHUB_PAGES_URL}/{form_option}_option.html?chat_id={user_id}&job_name={job_name}&prefill=true"
+            keyboard = [[InlineKeyboardButton("Set Preferred Date", url=form_url)]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
+            await query.edit_message_text(
+                f"Please set your preferred appointment date for {job_name}:",
+                reply_markup=reply_markup
+            )
+
 
 async def handle_check_appointments(update: Update, context: CallbackContext):
     """Handle the callback query for checking appointments."""
@@ -690,9 +740,9 @@ async def check_for_new_jobs(context: CallbackContext):
                 interval=300,
                 first=5,
                 data={
-                    'chat_id': user_id, 
-                    'user_choice': original_option, 
-                    'user_id': user_id, 
+                    'chat_id': user_id,
+                    'user_choice': original_option,
+                    'user_id': user_id,
                     'job_name': job_name
                 },
                 name=job_name_to_run,
@@ -751,12 +801,14 @@ def main():
 
         # Add handlers
         app.add_handler(CommandHandler("start", start))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d{1,2}/\d{1,2}/\d{4}$'), handle_preferred_date))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.Regex(r'^\d{1,2}/\d{1,2}/\d{4}$'),
+                                       handle_preferred_date))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_option))
         app.add_handler(CallbackQueryHandler(handle_cancel_job, pattern="^cancel_"))
         app.add_handler(CallbackQueryHandler(handle_check_appointments, pattern="^check_"))
+        app.add_handler(CallbackQueryHandler(handle_set_date_job_selection, pattern="^setdate_"))
         app.add_handler(CallbackQueryHandler(handle_preferred_date_job_selection, pattern="^date_"))
-        
+
         logger.info("Bot handlers added. Starting bot...")
 
         # Run the Flask app in a separate thread

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Registration for 2 Children</title>
+    <title>Registration for 3 Children</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -26,7 +26,7 @@
             width: 100%;
         }
 
-        input[type="text"], input[type="password"] {
+        input[type="text"], input[type="password"], input[type="date"] {
             width: 100%;
             padding: 15px;
             margin-bottom: 20px;
@@ -37,7 +37,7 @@
             transition: border-color 0.3s ease;
         }
 
-        input[type="text"]:focus, input[type="password"]:focus {
+        input[type="text"]:focus, input[type="password"]:focus, input[type="date"]:focus {
             border-color: #0056b3;
             outline: none;
         }
@@ -62,6 +62,13 @@
             background-color: #004494;
         }
 
+        .form-hint {
+            color: #666;
+            font-size: 14px;
+            margin-top: -15px;
+            margin-bottom: 20px;
+        }
+
         @media (max-width: 480px) {
             body {
                 padding: 10px;
@@ -71,36 +78,13 @@
                 padding: 20px;
             }
 
-            input[type="text"], input[type="password"] {
+            input[type="text"], input[type="password"], input[type="date"] {
                 padding: 12px;
             }
 
             button {
                 padding: 12px;
             }
-        }
-
-        input[type="text"], input[type="password"], input[type="date"] {
-            width: 100%;
-            padding: 15px;
-            margin-bottom: 20px;
-            border: 1px solid #ddd;
-            border-radius: 10px;
-            font-size: 16px;
-            box-sizing: border-box;
-            transition: border-color 0.3s ease;
-        }
-
-        input[type="text"]:focus, input[type="password"]:focus, input[type="date"]:focus {
-            border-color: #0056b3;
-            outline: none;
-        }
-
-        .form-hint {
-            color: #666;
-            font-size: 14px;
-            margin-top: -15px;
-            margin-bottom: 20px;
         }
     </style>
 </head>
@@ -122,72 +106,138 @@
     <input type="text" id="child2Name" name="child2_name" placeholder="Child 2 Full Name" required>
     <input type="text" id="child2BirthDate" name="child2_birth_date" placeholder="Child 2 Birth Date (dd/mm/yyyy)"
            required>
+    <h3>Child 3 Identifier</h3>
+    <input type="text" id="child3Identifier" name="child3_identifier" placeholder="Child 3 Identifier" required>
+    <input type="text" id="child3Name" name="child3_name" placeholder="Child 3 Full Name" required>
+    <input type="text" id="child3BirthDate" name="child3_birth_date" placeholder="Child 3 Birth Date (dd/mm/yyyy)"
+           required>
     <h3>Appointment Preference</h3>
-    <input type="date" id="preferredDate" name="preferred_date" required>
+    <input type="date" id="preferredDate" name="preferred_date" placeholder="Preferred Date (dd/mm/yyyy)" min="<?php echo date('Y-m-d'); ?>" required>
     <p class="form-hint">Select your preferred appointment date</p>
     <button type="submit">Confirm</button>
 </form>
 <script>
-    document.addEventListener('DOMContentLoaded', function () {
-        const urlParams = new URLSearchParams(window.location.search);
-        const chatId = urlParams.get('chat_id');
-        const jobName = urlParams.get('job_name');
+document.addEventListener('DOMContentLoaded', function () {
+    const urlParams = new URLSearchParams(window.location.search);
+    const chatId = urlParams.get('chat_id');
+    const jobName = urlParams.get('job_name');
+    const prefill = urlParams.get('prefill') === 'true';
 
-        // Validate required parameters
-        if (!chatId || !jobName) {
-            alert('Missing required parameters. Please return to the bot and restart the process.');
-            window.close();
-            return;
-        }
+    // Validate required parameters
+    if (!chatId || !jobName) {
+        alert('Missing required parameters. Please return to the bot and restart the process.');
+        window.close();
+        return;
+    }
 
-        document.getElementById('chat_id').value = chatId;
-        document.getElementById('job_name').value = jobName;
+    document.getElementById('chat_id').value = chatId;
+    document.getElementById('job_name').value = jobName;
 
-        document.getElementById('registrationForm').addEventListener('submit', function (e) {
-            e.preventDefault();
+    // If we're prefilling the form, fetch existing data
+    if (prefill) {
+        // Add a message indicating the purpose
+        const formHeading = document.createElement('div');
+        formHeading.innerHTML = '<h2 style="text-align: center; color: #0056b3;">Update Preferred Date</h2>' +
+                               '<p style="text-align: center; margin-bottom: 20px;">Your information is already saved. Please select your preferred appointment date below.</p>';
+        document.querySelector('form').prepend(formHeading);
 
-            const formData = new FormData(this);
+        // Make all fields except date readonly
+        document.querySelectorAll('input:not([type="date"])').forEach(input => {
+            if (input.id !== 'preferredDate' && input.type !== 'hidden' && input.type !== 'submit') {
+                input.readOnly = true;
+                input.style.backgroundColor = '#f0f0f0';
+            }
+        });
 
-            // Disable submit button to prevent multiple submissions
-            const submitButton = this.querySelector('button[type="submit"]');
-            submitButton.disabled = true;
-            submitButton.textContent = 'Submitting...';
+        // Highlight the date field
+        const dateField = document.getElementById('preferredDate');
+        dateField.style.border = '2px solid #0056b3';
+        dateField.style.backgroundColor = '#f7faff';
 
-            // Enhanced fetch with comprehensive error handling
-            fetch('https://scheduler-be.up.railway.app/submit-form', {
-                method: 'POST',
-                body: formData,
-                headers: {
-                    // Optional: Add any specific headers if needed
-                    'Accept': 'application/json'
+        // Fetch existing data from backend
+        fetch(`https://scheduler-be.up.railway.app/get-form-data?chat_id=${chatId}&job_name=${encodeURIComponent(jobName)}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success' && data.form_data) {
+                // Fill in the form with existing data
+                const formData = data.form_data;
+
+                if (formData.volume_page_number) document.getElementById('volumePageNumber').value = formData.volume_page_number;
+                if (formData.password) document.getElementById('password').value = formData.password;
+
+                if (formData.child1_identifier) document.getElementById('child1Identifier').value = formData.child1_identifier;
+                if (formData.child1_name) document.getElementById('child1Name').value = formData.child1_name;
+                if (formData.child1_birth_date) document.getElementById('child1BirthDate').value = formData.child1_birth_date;
+
+                if (formData.child2_identifier) document.getElementById('child2Identifier').value = formData.child2_identifier;
+                if (formData.child2_name) document.getElementById('child2Name').value = formData.child2_name;
+                if (formData.child2_birth_date) document.getElementById('child2BirthDate').value = formData.child2_birth_date;
+
+                if (formData.child3_identifier) document.getElementById('child3Identifier').value = formData.child3_identifier;
+                if (formData.child3_name) document.getElementById('child3Name').value = formData.child3_name;
+                if (formData.child3_birth_date) document.getElementById('child3BirthDate').value = formData.child3_birth_date;
+            } else {
+                alert('Could not load your form data. Please try again or fill in the form manually.');
+            }
+        })
+        .catch(error => {
+            console.error('Error loading form data:', error);
+            alert('Could not load your form data. Please try again or fill in the form manually.');
+        });
+
+        // Change the submit button text
+        document.querySelector('button[type="submit"]').textContent = 'Update Preferred Date';
+    }
+
+    document.getElementById('registrationForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+
+        const formData = new FormData(this);
+
+        // Disable submit button to prevent multiple submissions
+        const submitButton = this.querySelector('button[type="submit"]');
+        submitButton.disabled = true;
+        submitButton.textContent = 'Submitting...';
+
+        // Enhanced fetch with comprehensive error handling
+        fetch('https://scheduler-be.up.railway.app/submit-form', {
+            method: 'POST',
+            body: formData,
+            headers: {
+                // Optional: Add any specific headers if needed
+                'Accept': 'application/json'
+            }
+        })
+        .then(response => {
+            // Check for network-level errors
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            if (data.status === 'success') {
+                if (prefill) {
+                    alert('Preferred date updated successfully. The window will now close.');
+                } else {
+                    alert('Registration form submitted successfully. The window will now close.');
                 }
-            })
-                .then(response => {
-                    // Check for network-level errors
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    if (data.status === 'success') {
-                        alert('Registration form submitted successfully. The window will now close.');
-                        window.close();
-                    } else {
-                        // Detailed error messaging
-                        throw new Error(data.message || 'Unknown error occurred');
-                    }
-                })
-                .catch(error => {
-                    console.error('Submission Error:', error);
-                    alert(`Submission failed: ${error.message}. Please try again or contact support.`);
+                window.close();
+            } else {
+                // Detailed error messaging
+                throw new Error(data.message || 'Unknown error occurred');
+            }
+        })
+        .catch(error => {
+            console.error('Submission Error:', error);
+            alert(`Submission failed: ${error.message}. Please try again or contact support.`);
 
-                    // Re-enable submit button
-                    submitButton.disabled = false;
-                    submitButton.textContent = 'Confirm';
-                });
+            // Re-enable submit button
+            submitButton.disabled = false;
+            submitButton.textContent = prefill ? 'Update Preferred Date' : 'Confirm';
         });
     });
+});
 </script>
 </body>
 </html>

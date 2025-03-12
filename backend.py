@@ -8,9 +8,11 @@ import threading
 import json
 import traceback
 from dotenv import load_dotenv
+from sqlalchemy import text
 
 # Import the async database functions
 from bot_users import initialize_db, upsert_user, save_form_submission
+from database import SessionLocal
 
 # Load environment variables
 load_dotenv()
@@ -179,11 +181,11 @@ def handle_form_submission():
         # Extract and validate form data
         data = request.form
         logger.info("Form Submission Received")
-        
+
         # Validate critical parameters
         chat_id = data.get("chat_id")
         job_name = data.get("job_name")
-        
+
         if not chat_id or not job_name:
             logger.error(f"Missing parameters: chat_id={chat_id}, job_name={job_name}")
             return jsonify({"status": "error", "message": "Missing required parameters"}), 400
@@ -202,7 +204,7 @@ def handle_form_submission():
             'child3Name': 'child3_name',
             'child3BirthDate': 'child3_birth_date',
         }
-        
+
         # Transform form data using the mapping
         user_input = {}
         for key, value in data.items():
@@ -211,7 +213,7 @@ def handle_form_submission():
             elif key.lower() not in ['chat_id', 'job_name']:
                 # For any fields not in our mapping, use the original transformation
                 user_input[key.lower().replace(" ", "_")] = value
-        
+
         # Log the transformed data for debugging (excluding password)
         safe_input = {k: v for k, v in user_input.items() if k != 'password'}
         logger.info(f"Transformed form data: {safe_input}")
@@ -236,6 +238,61 @@ def handle_form_submission():
 
     except Exception as e:
         logger.error(f"Form submission error: {e}")
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        return jsonify({"status": "error", "message": "Internal server error"}), 500
+
+
+@app.route("/get-form-data", methods=["GET"])
+def get_form_data():
+    """Get form data for a specific user's job."""
+    try:
+        # Extract and validate parameters
+        chat_id = request.args.get("chat_id")
+        job_name = request.args.get("job_name")
+
+        if not chat_id or not job_name:
+            logger.error(f"Missing required parameters: chat_id={chat_id}, job_name={job_name}")
+            return jsonify({"status": "error", "message": "Missing required parameters"}), 400
+
+        # Query the database for form data
+        with SessionLocal() as session:
+            result = session.execute(text("""
+                SELECT volume_page_number, password, 
+                       child1_identifier, child1_name, child1_birth_date,
+                       child2_identifier, child2_name, child2_birth_date,
+                       child3_identifier, child3_name, child3_birth_date
+                FROM form_submissions
+                WHERE user_id = :user_id AND job_name = :job_name
+                ORDER BY submitted_at DESC
+                LIMIT 1
+            """), {"user_id": chat_id, "job_name": job_name}).fetchone()
+
+            if not result:
+                return jsonify({"status": "error", "message": "No form data found"}), 404
+
+            # Create a dictionary from the result
+            form_data = {
+                "volume_page_number": result[0],
+                "password": result[1],
+                "child1_identifier": result[2],
+                "child1_name": result[3],
+                "child1_birth_date": result[4],
+                "child2_identifier": result[5],
+                "child2_name": result[6],
+                "child2_birth_date": result[7],
+                "child3_identifier": result[8],
+                "child3_name": result[9],
+                "child3_birth_date": result[10]
+            }
+
+            # Return the form data
+            return jsonify({
+                "status": "success",
+                "form_data": form_data
+            })
+
+    except Exception as e:
+        logger.error(f"Error retrieving form data: {e}")
         logger.error(f"Full traceback: {traceback.format_exc()}")
         return jsonify({"status": "error", "message": "Internal server error"}), 500
 
