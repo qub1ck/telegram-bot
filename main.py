@@ -186,8 +186,7 @@ async def start(update: Update, context: CallbackContext):
     await initialize_db()
     user_id = update.message.from_user.id
     await upsert_user(user_id)
-    await update.message.reply_text("Hello! I'm your appointment bot 🤖!")
-    await update.message.reply_text("I can help you search for appointments and provide registration forms.",
+    await update.message.reply_text("Hello! I'm your appointment bot 🤖!",
                                     reply_markup=await show_options(update, context))
 
 
