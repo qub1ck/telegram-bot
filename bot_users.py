@@ -145,14 +145,23 @@ async def get_all_active_jobs():
 
 
 async def remove_user_job(user_id, job_name):
-    """Remove a job for a user."""
+    """Remove a job for a user and associated form submissions."""
     try:
         with SessionLocal() as session:
+            # First delete form submissions
             session.execute(text("""
-                DELETE FROM user_jobs WHERE user_id = :user_id AND job_name = :job_name
+                DELETE FROM form_submissions 
+                WHERE user_id = :user_id AND job_name = :job_name
             """), {"user_id": user_id, "job_name": job_name})
+
+            # Then delete the job
+            session.execute(text("""
+                DELETE FROM user_jobs 
+                WHERE user_id = :user_id AND job_name = :job_name
+            """), {"user_id": user_id, "job_name": job_name})
+
             session.commit()
-            logger.info(f"Job {job_name} removed for user {user_id}.")
+            logger.info(f"Job {job_name} and related submissions removed for user {user_id}.")
     except SQLAlchemyError as e:
         logger.error(f"Error removing user job: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
