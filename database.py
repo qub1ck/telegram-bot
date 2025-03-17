@@ -86,7 +86,8 @@ def init_db():
                     child3_name TEXT,
                     child3_birth_date TEXT,
                     job_name TEXT,
-                    preferred_date TEXT,  -- Add this field
+                    preferred_date TEXT,  
+                    service_type TEXT DEFAULT 'menores',
                     submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(user_id) REFERENCES users(user_id)
                 );

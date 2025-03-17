@@ -46,13 +46,13 @@ async def save_form_submission(user_id, form_data, job_name):
                     child1_identifier, child1_name, child1_birth_date,
                     child2_identifier, child2_name, child2_birth_date,
                     child3_identifier, child3_name, child3_birth_date,
-                    job_name, preferred_date
+                    job_name, preferred_date, service_type
                 ) VALUES (
                     :user_id, :volume_page_number, :password,
                     :child1_identifier, :child1_name, :child1_birth_date,
                     :child2_identifier, :child2_name, :child2_birth_date,
                     :child3_identifier, :child3_name, :child3_birth_date,
-                    :job_name, :preferred_date
+                    :job_name, :preferred_date, :service_type
                 )
             """), {
                 "user_id": user_id,
@@ -68,23 +68,9 @@ async def save_form_submission(user_id, form_data, job_name):
                 "child3_name": form_data.get("child3_name", ""),
                 "child3_birth_date": form_data.get("child3_birth_date", ""),
                 "job_name": job_name,
-                "preferred_date": form_data.get("preferred_date", "")
+                "preferred_date": form_data.get("preferred_date", ""),
+                "service_type": form_data.get("service_type", "menores")
             })
-
-            # Update job status
-            session.execute(text("""
-                UPDATE user_jobs
-                SET status = 'active'
-                WHERE user_id = :user_id AND job_name = :job_name
-            """), {"user_id": user_id, "job_name": job_name})
-
-            session.commit()
-            logger.info(f"Form submission saved for user {user_id}, job {job_name}")
-            return True
-    except SQLAlchemyError as e:
-        logger.error(f"Error saving form submission: {e}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return False
 
 
 async def add_user_job(user_id, job_name):

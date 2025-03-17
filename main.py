@@ -267,13 +267,33 @@ async def handle_option(update: Update, context: CallbackContext):
     if user_choice == "Search for new appointments":
         # Show the appointment options
         options_keyboard = [
+            ['Reservar Cita de Minores Ley 36'],
+            ['Solicitar certificación de Nacimiento'],
+            ['Solicitar certificación de Nacimiento para DNI'],
+            ['CANCEL']
+        ]
+        reply_markup = ReplyKeyboardMarkup(options_keyboard, one_time_keyboard=True, resize_keyboard=True)
+        await update.message.reply_text("Please choose one of the following options:", reply_markup=reply_markup)
+        return
+
+    if user_choice == "Reservar Cita de Minores Ley 36":
+        # Ask to select number of children options
+        children_options = [
             ['INSCRIPCIÓN MENORES LEY36 OPCIÓN 1 HIJO'],
             ['INSCRIPCIÓN MENORES LEY36 OPCIÓN 2 HIJOS'],
             ['INSCRIPCIÓN MENORES LEY36 OPCIÓN 3 HIJOS'],
             ['CANCEL']
         ]
-        reply_markup = ReplyKeyboardMarkup(options_keyboard, one_time_keyboard=True, resize_keyboard=True)
-        await update.message.reply_text("Please choose one of the following options:", reply_markup=reply_markup)
+        reply_markup = ReplyKeyboardMarkup(children_options, one_time_keyboard=True, resize_keyboard=True)
+        await update.message.reply_text("Please select the number of children:", reply_markup=reply_markup)
+        return
+
+    if user_choice in ["Solicitar certificación de Nacimiento", "Solicitar certificación de Nacimiento para DNI"]:
+        # Ask for the name of the appointment
+        await update.message.reply_text("Please provide a name for this appointment (e.g., 'John' or 'Maria'):")
+        context.user_data['pending_job'] = user_choice
+        context.user_data['form_option'] = "fourth"
+        context.user_data['service_type'] = "certificate"
         return
 
     if user_choice in ["INSCRIPCIÓN MENORES LEY36 OPCIÓN 1 HIJO",
@@ -282,6 +302,7 @@ async def handle_option(update: Update, context: CallbackContext):
         # Ask for the name of the appointment
         await update.message.reply_text("Please provide a name for this appointment (e.g., 'John' or 'Maria'):")
         context.user_data['pending_job'] = user_choice  # Store the selected option temporarily
+        context.user_data['service_type'] = "menores"
 
         # Also store the option number for form link
         if "1 HIJO" in user_choice:
@@ -297,9 +318,15 @@ async def handle_option(update: Update, context: CallbackContext):
         user_provided_name = update.message.text
         selected_option = context.user_data['pending_job']  # Retrieve the original option text
         form_option = context.user_data.get('form_option')  # Get the form option
+        service_type = context.user_data.get('service_type', 'menores')  # Get service type
 
-        # Format the job name as "Name, Selected Option"
-        job_name = f"{user_provided_name}, {selected_option.split()[-2]} {selected_option.split()[-1]}"
+        # Format the job name based on the service type
+        if service_type == "certificate":
+            # For certificate options, format as "Name, Certificate Type"
+            job_name = f"{user_provided_name}, {selected_option}"
+        else:
+            # For menores options, format as before
+            job_name = f"{user_provided_name}, {selected_option.split()[-2]} {selected_option.split()[-1]}"
 
         # Store this for the registration form
         context.user_data['pending_job_name'] = job_name
@@ -348,6 +375,8 @@ async def handle_option(update: Update, context: CallbackContext):
         del context.user_data['pending_job']
         if 'form_option' in context.user_data:
             del context.user_data['form_option']
+        if 'service_type' in context.user_data:
+            del context.user_data['service_type']
         return
 
     if user_choice == "CANCEL":
