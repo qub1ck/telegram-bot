@@ -72,6 +72,21 @@ async def save_form_submission(user_id, form_data, job_name):
                 "service_type": form_data.get("service_type", "menores")
             })
 
+            # Update job status
+            session.execute(text("""
+                UPDATE user_jobs
+                SET status = 'active'
+                WHERE user_id = :user_id AND job_name = :job_name
+            """), {"user_id": user_id, "job_name": job_name})
+
+            session.commit()
+            logger.info(f"Form submission saved for user {user_id}, job {job_name}")
+            return True
+    except SQLAlchemyError as e:
+        logger.error(f"Error saving form submission: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return False
+
 
 async def add_user_job(user_id, job_name):
     """Add a new job for a user with pending_form status."""
