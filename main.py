@@ -5,7 +5,6 @@ import subprocess
 import traceback
 import asyncio
 from cgitb import text
-
 from flask import Flask, request, jsonify
 from telegram import Update, ReplyKeyboardMarkup, Message, Chat, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, CallbackQueryHandler
@@ -524,6 +523,21 @@ async def check_dates_continuously(context: CallbackContext):
             return
 
         if available_dates and len(available_dates) > 0:
+            # Get the service type description for the notification
+            service_description = "unknown service"
+            if "INSCRIPCIÓN MENORES" in appointment_option:
+                service_description = "Reservar Cita de Menores Ley 36"
+            elif "para DNI" in appointment_option:
+                service_description = "Solicitar certificación de Nacimiento para DNI"
+            else:
+                service_description = "Solicitar certificación de Nacimiento"
+
+            # Send a simple notification first
+            await context.bot.send_message(
+                chat_id,
+                f"⚠️ Found appointments for {service_description}!"
+            )
+
             # Check if a date was automatically selected
             was_auto_selected = any("SELECTED" in date for date in available_dates)
             was_closest = any("CLOSEST AVAILABLE" in date for date in available_dates)
@@ -555,7 +569,7 @@ async def check_dates_continuously(context: CallbackContext):
                     "Please log in to the system as soon as possible to book your appointment."
                 )
 
-            # Send the appropriate message
+            # Send the detailed message
             await context.bot.send_message(chat_id, formatted_message)
             logger.info(f"Available dates found for user {chat_id}")
 
