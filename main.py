@@ -4,7 +4,7 @@ import re
 import subprocess
 import traceback
 import asyncio
-from cgitb import text
+from sqlalchemy import text
 from flask import Flask, request, jsonify
 from telegram import Update, ReplyKeyboardMarkup, Message, Chat, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, CallbackQueryHandler
@@ -877,6 +877,7 @@ async def check_for_new_jobs(context: CallbackContext):
             # Get the service type
             try:
                 with SessionLocal() as session:
+                    # Use sqlalchemy.text explicitly to avoid conflict
                     result = session.execute(text("""
                         SELECT service_type FROM user_jobs
                         WHERE user_id = :user_id AND job_name = :job_name
