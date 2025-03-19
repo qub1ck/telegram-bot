@@ -861,18 +861,23 @@ async def check_for_new_jobs(context: CallbackContext):
                 continue
 
             # Get the service type
-            with SessionLocal() as session:
-                service_type_result = session.execute(text("""
-                    SELECT service_type FROM user_jobs
-                    WHERE user_id = :user_id AND job_name = :job_name
-                    LIMIT 1
-                """), {"user_id": user_id, "job_name": job_name}).fetchone()
+            try:
+                with SessionLocal() as session:
+                    result = session.execute(text("""
+                        SELECT service_type FROM user_jobs
+                        WHERE user_id = :user_id AND job_name = :job_name
+                        LIMIT 1
+                    """), {"user_id": user_id, "job_name": job_name}).fetchone()
 
-                if not service_type_result:
-                    logger.warning(f"Could not find service type for job: {job_name}")
-                    continue
+                    if not result:
+                        logger.warning(f"Could not find service type for job: {job_name}")
+                        continue
 
-                service_type = service_type_result[0]
+                    service_type = result[0]
+            except Exception as db_error:
+                logger.error(f"Database error when getting service type: {db_error}")
+                logger.error(traceback.format_exc())
+                continue
 
             # Determine the correct service option based on service type
             if service_type == "menores":
@@ -886,20 +891,24 @@ async def check_for_new_jobs(context: CallbackContext):
                     original_option = "Solicitar certificación de Nacimiento"
 
             # Efficient job scheduling
-            context.job_queue.run_repeating(
-                check_dates_continuously,
-                interval=300,
-                first=5,
-                data={
-                    'chat_id': user_id,
-                    'user_choice': original_option,
-                    'user_id': user_id,
-                    'job_name': job_name
-                },
-                name=job_name_to_run,
-                job_kwargs={'max_instances': 1}  # Prevent multiple instances
-            )
-            logger.info(f"Scheduled job for {job_name}")
+            try:
+                context.job_queue.run_repeating(
+                    check_dates_continuously,
+                    interval=300,
+                    first=5,
+                    data={
+                        'chat_id': user_id,
+                        'user_choice': original_option,
+                        'user_id': user_id,
+                        'job_name': job_name
+                    },
+                    name=job_name_to_run,
+                    job_kwargs={'max_instances': 1}  # Prevent multiple instances
+                )
+                logger.info(f"Scheduled job for {job_name}")
+            except Exception as job_error:
+                logger.error(f"Error scheduling job {job_name}: {job_error}")
+                logger.error(traceback.format_exc())
 
     except Exception as e:
         logger.error(f"Error in job checking process: {e}")
