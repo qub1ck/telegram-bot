@@ -4,6 +4,8 @@ import re
 import subprocess
 import traceback
 import asyncio
+from cgitb import text
+
 from flask import Flask, request, jsonify
 from telegram import Update, ReplyKeyboardMarkup, Message, Chat, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext, CallbackQueryHandler
@@ -12,6 +14,7 @@ from bot_users import (
     initialize_db, get_all_active_jobs, is_job_ready_to_search,
     get_preferred_date, update_preferred_date
 )
+from database import SessionLocal
 from reacher import check_appointments_async
 from dotenv import load_dotenv
 
@@ -291,7 +294,7 @@ async def handle_option(update: Update, context: CallbackContext):
         # Ask for the name of the appointment
         await update.message.reply_text("Please provide a name for this appointment (e.g., 'John' or 'Maria'):")
         context.user_data['pending_job'] = user_choice
-        context.user_data['form_option'] = "fourth"
+        context.user_data['form_option'] = "certificate"  # Updated to use the certificate form
         context.user_data['service_type'] = "certificate"
         return
 
@@ -344,7 +347,7 @@ async def handle_option(update: Update, context: CallbackContext):
             return
 
         # Add the job as pending_form (will be updated to active after form submission)
-        job_added = await add_user_job(user_id, job_name)
+        job_added = await add_user_job(user_id, job_name, service_type)
         if not job_added:
             await update.message.reply_text("Failed to create job. Please try again.",
                                             reply_markup=await show_options(update, context))
@@ -356,7 +359,11 @@ async def handle_option(update: Update, context: CallbackContext):
         # Send registration form link
         if form_option:
             chat_id = update.message.chat_id
-            form_url = f"{GITHUB_PAGES_URL}/{form_option}_option.html?chat_id={chat_id}&job_name={job_name}"
+            if form_option == "certificate":
+                form_url = f"{GITHUB_PAGES_URL}/certificate_option.html?chat_id={chat_id}&job_name={job_name}"
+            else:
+                form_url = f"{GITHUB_PAGES_URL}/{form_option}_option.html?chat_id={chat_id}&job_name={job_name}"
+
             keyboard = [[InlineKeyboardButton("Fill Registration Form", url=form_url)]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(
@@ -452,19 +459,37 @@ async def check_dates_continuously(context: CallbackContext):
             context.job.schedule_removal()
             return
 
+        # Get service type
+        with SessionLocal() as session:
+            service_type_result = session.execute(text("""
+                SELECT service_type FROM user_jobs
+                WHERE user_id = :user_id AND job_name = :job_name
+                LIMIT 1
+            """), {"user_id": user_id, "job_name": job_name}).fetchone()
+
+            if not service_type_result:
+                logger.info(f"Job {job_name} not found in database")
+                context.job.schedule_removal()
+                return
+
+            service_type = service_type_result[0]
+
         # Get preferred date for this job if it exists
         preferred_date = await get_preferred_date(user_id, job_name)
 
         # If we don't have a preferred date, check if we need to ask the user
         if not preferred_date and 'preferred_date_asked' not in job_data:
-            # Determine form type from job name
+            # Determine form type based on service type
             form_option = None
-            if "1 HIJO" in job_name:
-                form_option = "first"
-            elif "2 HIJOS" in job_name:
-                form_option = "second"
-            elif "3 HIJOS" in job_name:
-                form_option = "third"
+            if service_type == "menores":
+                if "1 HIJO" in job_name:
+                    form_option = "first"
+                elif "2 HIJOS" in job_name:
+                    form_option = "second"
+                elif "3 HIJOS" in job_name:
+                    form_option = "third"
+            else:
+                form_option = "certificate"
 
             if form_option:
                 form_url = f"{GITHUB_PAGES_URL}/{form_option}_option.html?chat_id={chat_id}&job_name={job_name}&prefill=true"
@@ -480,10 +505,18 @@ async def check_dates_continuously(context: CallbackContext):
                 # Mark that we've asked so we don't keep asking
                 job_data['preferred_date_asked'] = True
 
+        # Determine the correct service option based on service type
+        appointment_option = user_choice
+        if service_type == "certificate":
+            if "Nacimiento para DNI" in job_name:
+                appointment_option = "Solicitar certificación de Nacimiento para DNI"
+            else:
+                appointment_option = "Solicitar certificación de Nacimiento"
+
         # Time-boxed appointment checking
         try:
             available_dates = await asyncio.wait_for(
-                check_appointments_async(user_choice, preferred_date),
+                check_appointments_async(appointment_option, preferred_date),
                 timeout=60  # 1-minute timeout
             )
         except asyncio.TimeoutError:
@@ -694,9 +727,31 @@ async def handle_check_appointments(update: Update, context: CallbackContext):
         # Check all appointments
         user_jobs = await get_user_jobs(user_id)
         for job in user_jobs:
-            # Extract the original option text from the job name
-            original_option = job.split(", ")[-1]  # e.g., "1 HIJO" -> "INSCRIPCIÓN MENORES LEY36 OPCIÓN 1 HIJO"
-            original_option_text = f"INSCRIPCIÓN MENORES LEY36 OPCIÓN {original_option}"
+            # Get the service type for this job
+            with SessionLocal() as session:
+                service_type_result = session.execute(text("""
+                    SELECT service_type FROM user_jobs
+                    WHERE user_id = :user_id AND job_name = :job_name
+                    LIMIT 1
+                """), {"user_id": user_id, "job_name": job}).fetchone()
+
+                if not service_type_result:
+                    continue
+
+                service_type = service_type_result[0]
+
+            # Determine the appointment option based on service type
+            if service_type == "menores":
+                # Extract the original option text from the job name
+                original_option = job.split(", ")[-1]  # e.g., "1 HIJO"
+                original_option_text = f"INSCRIPCIÓN MENORES LEY36 OPCIÓN {original_option}"
+            else:
+                # For certificate services
+                if "para DNI" in job:
+                    original_option_text = "Solicitar certificación de Nacimiento para DNI"
+                else:
+                    original_option_text = "Solicitar certificación de Nacimiento"
+
             available_dates = await check_appointments_async(original_option_text)
             if available_dates:
                 await query.message.reply_text(f"Available dates found for {job}: {', '.join(available_dates)}")
@@ -705,9 +760,33 @@ async def handle_check_appointments(update: Update, context: CallbackContext):
     else:
         # Check a specific appointment
         job_name = callback_data.replace("check_", "")
-        # Extract the original option text from the job name
-        original_option = job_name.split(", ")[-1]  # e.g., "1 HIJO" -> "INSCRIPCIÓN MENORES LEY36 OPCIÓN 1 HIJO"
-        original_option_text = f"INSCRIPCIÓN MENORES LEY36 OPCIÓN {original_option}"
+
+        # Get the service type for this job
+        with SessionLocal() as session:
+            service_type_result = session.execute(text("""
+                SELECT service_type FROM user_jobs
+                WHERE user_id = :user_id AND job_name = :job_name
+                LIMIT 1
+            """), {"user_id": user_id, "job_name": job_name}).fetchone()
+
+            if not service_type_result:
+                await query.message.reply_text(f"Job {job_name} not found.")
+                return
+
+            service_type = service_type_result[0]
+
+        # Determine the appointment option based on service type
+        if service_type == "menores":
+            # Extract the original option text from the job name
+            original_option = job_name.split(", ")[-1]  # e.g., "1 HIJO"
+            original_option_text = f"INSCRIPCIÓN MENORES LEY36 OPCIÓN {original_option}"
+        else:
+            # For certificate services
+            if "para DNI" in job_name:
+                original_option_text = "Solicitar certificación de Nacimiento para DNI"
+            else:
+                original_option_text = "Solicitar certificación de Nacimiento"
+
         available_dates = await check_appointments_async(original_option_text)
         if available_dates:
             await query.message.reply_text(f"Available dates found for {job_name}: {', '.join(available_dates)}")
@@ -725,8 +804,31 @@ async def restart_active_jobs(app: Application):
     for job in active_jobs:
         user_id = job["user_id"]
         job_name = job["job_name"]
-        original_option = job_name.split(", ")[-1]
-        original_option_text = f"INSCRIPCIÓN MENORES LEY36 OPCIÓN {original_option}"
+
+        # Get the service type
+        with SessionLocal() as session:
+            service_type_result = session.execute(text("""
+                SELECT service_type FROM user_jobs
+                WHERE user_id = :user_id AND job_name = :job_name
+                LIMIT 1
+            """), {"user_id": user_id, "job_name": job_name}).fetchone()
+
+            if not service_type_result:
+                logger.warning(f"Could not find service type for job: {job_name}")
+                continue
+
+            service_type = service_type_result[0]
+
+        # Determine the correct service option based on service type
+        if service_type == "menores":
+            original_option = job_name.split(", ")[-1]
+            original_option_text = f"INSCRIPCIÓN MENORES LEY36 OPCIÓN {original_option}"
+        else:
+            # For certificate services
+            if "para DNI" in job_name:
+                original_option_text = "Solicitar certificación de Nacimiento para DNI"
+            else:
+                original_option_text = "Solicitar certificación de Nacimiento"
 
         logger.info(f"Restarting job for user {user_id} with choice {job_name}")
 
@@ -758,9 +860,30 @@ async def check_for_new_jobs(context: CallbackContext):
             if existing_jobs:
                 continue
 
-            # Extract original option
-            option_part = job_name.split(", ")[-1]
-            original_option = f"INSCRIPCIÓN MENORES LEY36 OPCIÓN {option_part}"
+            # Get the service type
+            with SessionLocal() as session:
+                service_type_result = session.execute(text("""
+                    SELECT service_type FROM user_jobs
+                    WHERE user_id = :user_id AND job_name = :job_name
+                    LIMIT 1
+                """), {"user_id": user_id, "job_name": job_name}).fetchone()
+
+                if not service_type_result:
+                    logger.warning(f"Could not find service type for job: {job_name}")
+                    continue
+
+                service_type = service_type_result[0]
+
+            # Determine the correct service option based on service type
+            if service_type == "menores":
+                option_part = job_name.split(", ")[-1]
+                original_option = f"INSCRIPCIÓN MENORES LEY36 OPCIÓN {option_part}"
+            else:
+                # For certificate services
+                if "para DNI" in job_name:
+                    original_option = "Solicitar certificación de Nacimiento para DNI"
+                else:
+                    original_option = "Solicitar certificación de Nacimiento"
 
             # Efficient job scheduling
             context.job_queue.run_repeating(
@@ -780,6 +903,7 @@ async def check_for_new_jobs(context: CallbackContext):
 
     except Exception as e:
         logger.error(f"Error in job checking process: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
 
 
 async def on_startup(app: Application):

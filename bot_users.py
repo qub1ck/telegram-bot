@@ -39,45 +39,74 @@ async def save_form_submission(user_id, form_data, job_name):
     """Save form submission data to the database and update job status."""
     try:
         with SessionLocal() as session:
-            # Insert form submission
-            session.execute(text("""
-                INSERT INTO form_submissions (
-                    user_id, volume_page_number, password,
-                    child1_identifier, child1_name, child1_birth_date,
-                    child2_identifier, child2_name, child2_birth_date,
-                    child3_identifier, child3_name, child3_birth_date,
-                    job_name, preferred_date, service_type
-                ) VALUES (
-                    :user_id, :volume_page_number, :password,
-                    :child1_identifier, :child1_name, :child1_birth_date,
-                    :child2_identifier, :child2_name, :child2_birth_date,
-                    :child3_identifier, :child3_name, :child3_birth_date,
-                    :job_name, :preferred_date, :service_type
-                )
-            """), {
-                "user_id": user_id,
-                "volume_page_number": form_data.get("volume_page_number"),
-                "password": form_data.get("password"),
-                "child1_identifier": form_data.get("child1_identifier"),
-                "child1_name": form_data.get("child1_name"),
-                "child1_birth_date": form_data.get("child1_birth_date"),
-                "child2_identifier": form_data.get("child2_identifier", ""),
-                "child2_name": form_data.get("child2_name", ""),
-                "child2_birth_date": form_data.get("child2_birth_date", ""),
-                "child3_identifier": form_data.get("child3_identifier", ""),
-                "child3_name": form_data.get("child3_name", ""),
-                "child3_birth_date": form_data.get("child3_birth_date", ""),
-                "job_name": job_name,
-                "preferred_date": form_data.get("preferred_date", ""),
-                "service_type": form_data.get("service_type", "menores")
-            })
+            # Determine service type
+            service_type = form_data.get("service_type", "menores")
 
-            # Update job status
+            if service_type == "menores":
+                # Insert form submission for menores service
+                session.execute(text("""
+                    INSERT INTO menores_submissions (
+                        user_id, job_name, volume_page_number, password,
+                        child1_identifier, child1_name, child1_birth_date,
+                        child2_identifier, child2_name, child2_birth_date,
+                        child3_identifier, child3_name, child3_birth_date,
+                        preferred_date
+                    ) VALUES (
+                        :user_id, :job_name, :volume_page_number, :password,
+                        :child1_identifier, :child1_name, :child1_birth_date,
+                        :child2_identifier, :child2_name, :child2_birth_date,
+                        :child3_identifier, :child3_name, :child3_birth_date,
+                        :preferred_date
+                    )
+                """), {
+                    "user_id": user_id,
+                    "job_name": job_name,
+                    "volume_page_number": form_data.get("volume_page_number"),
+                    "password": form_data.get("password"),
+                    "child1_identifier": form_data.get("child1_identifier"),
+                    "child1_name": form_data.get("child1_name"),
+                    "child1_birth_date": form_data.get("child1_birth_date"),
+                    "child2_identifier": form_data.get("child2_identifier", ""),
+                    "child2_name": form_data.get("child2_name", ""),
+                    "child2_birth_date": form_data.get("child2_birth_date", ""),
+                    "child3_identifier": form_data.get("child3_identifier", ""),
+                    "child3_name": form_data.get("child3_name", ""),
+                    "child3_birth_date": form_data.get("child3_birth_date", ""),
+                    "preferred_date": form_data.get("preferred_date", "")
+                })
+            else:
+                # Determine certificate type
+                cert_type = "nacimiento"
+                if "para DNI" in job_name:
+                    cert_type = "dni"
+
+                # Insert form submission for certificate service
+                session.execute(text("""
+                    INSERT INTO certificate_submissions (
+                        user_id, job_name, preferred_date, cert_type,
+                        carne_identidad, contrasena, tomo, pagina, visado_mark
+                    ) VALUES (
+                        :user_id, :job_name, :preferred_date, :cert_type,
+                        :carne_identidad, :contrasena, :tomo, :pagina, :visado_mark
+                    )
+                """), {
+                    "user_id": user_id,
+                    "job_name": job_name,
+                    "preferred_date": form_data.get("preferred_date", ""),
+                    "cert_type": cert_type,
+                    "carne_identidad": form_data.get("carne_identidad", ""),
+                    "contrasena": form_data.get("contrasena", ""),
+                    "tomo": form_data.get("tomo", ""),
+                    "pagina": form_data.get("pagina", ""),
+                    "visado_mark": form_data.get("visado_mark", "x")  # Default to "x" for visado_mark
+                })
+
+            # Update job status and service type
             session.execute(text("""
                 UPDATE user_jobs
-                SET status = 'active'
+                SET status = 'active', service_type = :service_type
                 WHERE user_id = :user_id AND job_name = :job_name
-            """), {"user_id": user_id, "job_name": job_name})
+            """), {"user_id": user_id, "job_name": job_name, "service_type": service_type})
 
             session.commit()
             logger.info(f"Form submission saved for user {user_id}, job {job_name}")
@@ -88,15 +117,15 @@ async def save_form_submission(user_id, form_data, job_name):
         return False
 
 
-async def add_user_job(user_id, job_name):
+async def add_user_job(user_id, job_name, service_type='menores'):
     """Add a new job for a user with pending_form status."""
     try:
         await upsert_user(user_id)
         with SessionLocal() as session:
             session.execute(text("""
-                INSERT INTO user_jobs (user_id, job_name, status)
-                VALUES (:user_id, :job_name, 'pending_form')
-            """), {"user_id": user_id, "job_name": job_name})
+                INSERT INTO user_jobs (user_id, job_name, status, service_type)
+                VALUES (:user_id, :job_name, 'pending_form', :service_type)
+            """), {"user_id": user_id, "job_name": job_name, "service_type": service_type})
             session.commit()
             logger.info(f"Job {job_name} added for user {user_id} with pending_form status.")
             return True
@@ -148,13 +177,29 @@ async def remove_user_job(user_id, job_name):
     """Remove a job for a user and associated form submissions."""
     try:
         with SessionLocal() as session:
-            # First delete form submissions
-            session.execute(text("""
-                DELETE FROM form_submissions 
+            # First get the service type
+            service_type_result = session.execute(text("""
+                SELECT service_type FROM user_jobs
                 WHERE user_id = :user_id AND job_name = :job_name
-            """), {"user_id": user_id, "job_name": job_name})
+                LIMIT 1
+            """), {"user_id": user_id, "job_name": job_name}).fetchone()
 
-            # Then delete the job
+            if service_type_result:
+                service_type = service_type_result[0]
+
+                # Delete from appropriate submissions table
+                if service_type == "menores":
+                    session.execute(text("""
+                        DELETE FROM menores_submissions 
+                        WHERE user_id = :user_id AND job_name = :job_name
+                    """), {"user_id": user_id, "job_name": job_name})
+                else:
+                    session.execute(text("""
+                        DELETE FROM certificate_submissions 
+                        WHERE user_id = :user_id AND job_name = :job_name
+                    """), {"user_id": user_id, "job_name": job_name})
+
+            # Delete the job
             session.execute(text("""
                 DELETE FROM user_jobs 
                 WHERE user_id = :user_id AND job_name = :job_name
@@ -171,12 +216,33 @@ async def get_preferred_date(user_id, job_name):
     """Get the preferred date for a job."""
     try:
         with SessionLocal() as session:
-            result = session.execute(text("""
-                SELECT preferred_date FROM form_submissions
+            # First get the service type
+            service_type_result = session.execute(text("""
+                SELECT service_type FROM user_jobs
                 WHERE user_id = :user_id AND job_name = :job_name
-                ORDER BY submitted_at DESC
                 LIMIT 1
             """), {"user_id": user_id, "job_name": job_name}).fetchone()
+
+            if not service_type_result:
+                return None
+
+            service_type = service_type_result[0]
+
+            # Query the appropriate table
+            if service_type == "menores":
+                result = session.execute(text("""
+                    SELECT preferred_date FROM menores_submissions
+                    WHERE user_id = :user_id AND job_name = :job_name
+                    ORDER BY submitted_at DESC
+                    LIMIT 1
+                """), {"user_id": user_id, "job_name": job_name}).fetchone()
+            else:
+                result = session.execute(text("""
+                    SELECT preferred_date FROM certificate_submissions
+                    WHERE user_id = :user_id AND job_name = :job_name
+                    ORDER BY submitted_at DESC
+                    LIMIT 1
+                """), {"user_id": user_id, "job_name": job_name}).fetchone()
 
             if result and result[0]:
                 return result[0]
@@ -199,31 +265,72 @@ async def get_user_jobs(user_id):
         logger.error(f"Traceback: {traceback.format_exc()}")
         return []
 
+
 async def update_preferred_date(user_id, job_name, preferred_date):
     """Update preferred date for an existing job."""
     try:
         with SessionLocal() as session:
-            # Check if the job already has a form submission
-            existing = session.execute(text("""
-                SELECT id FROM form_submissions
+            # First get the service type
+            service_type_result = session.execute(text("""
+                SELECT service_type FROM user_jobs
                 WHERE user_id = :user_id AND job_name = :job_name
                 LIMIT 1
             """), {"user_id": user_id, "job_name": job_name}).fetchone()
-            
-            if existing:
-                # Update existing record
-                session.execute(text("""
-                    UPDATE form_submissions
-                    SET preferred_date = :preferred_date
+
+            if not service_type_result:
+                return False
+
+            service_type = service_type_result[0]
+
+            if service_type == "menores":
+                # Check if the job already has a form submission
+                existing = session.execute(text("""
+                    SELECT id FROM menores_submissions
                     WHERE user_id = :user_id AND job_name = :job_name
-                """), {"user_id": user_id, "job_name": job_name, "preferred_date": preferred_date})
+                    LIMIT 1
+                """), {"user_id": user_id, "job_name": job_name}).fetchone()
+
+                if existing:
+                    # Update existing record
+                    session.execute(text("""
+                        UPDATE menores_submissions
+                        SET preferred_date = :preferred_date
+                        WHERE user_id = :user_id AND job_name = :job_name
+                    """), {"user_id": user_id, "job_name": job_name, "preferred_date": preferred_date})
+                else:
+                    # Create a minimal record
+                    session.execute(text("""
+                        INSERT INTO menores_submissions (user_id, job_name, preferred_date)
+                        VALUES (:user_id, :job_name, :preferred_date)
+                    """), {"user_id": user_id, "job_name": job_name, "preferred_date": preferred_date})
             else:
-                # Create a minimal record
-                session.execute(text("""
-                    INSERT INTO form_submissions (user_id, job_name, preferred_date)
-                    VALUES (:user_id, :job_name, :preferred_date)
-                """), {"user_id": user_id, "job_name": job_name, "preferred_date": preferred_date})
-            
+                # Check if the job already has a form submission
+                existing = session.execute(text("""
+                    SELECT id FROM certificate_submissions
+                    WHERE user_id = :user_id AND job_name = :job_name
+                    LIMIT 1
+                """), {"user_id": user_id, "job_name": job_name}).fetchone()
+
+                if existing:
+                    # Update existing record
+                    session.execute(text("""
+                        UPDATE certificate_submissions
+                        SET preferred_date = :preferred_date
+                        WHERE user_id = :user_id AND job_name = :job_name
+                    """), {"user_id": user_id, "job_name": job_name, "preferred_date": preferred_date})
+                else:
+                    # Determine cert type
+                    cert_type = "nacimiento"
+                    if "para DNI" in job_name:
+                        cert_type = "dni"
+
+                    # Create a minimal record
+                    session.execute(text("""
+                        INSERT INTO certificate_submissions (user_id, job_name, preferred_date, cert_type)
+                        VALUES (:user_id, :job_name, :preferred_date, :cert_type)
+                    """), {"user_id": user_id, "job_name": job_name, "preferred_date": preferred_date,
+                           "cert_type": cert_type})
+
             session.commit()
             logger.info(f"Updated preferred date for user {user_id}, job {job_name}")
             return True

@@ -41,6 +41,7 @@ except Exception as e:
     logger.error(f"Traceback: {traceback.format_exc()}")
     raise
 
+
 def init_db():
     """Optimized table creation with error handling and indexing."""
     try:
@@ -62,6 +63,7 @@ def init_db():
                     user_id BIGINT NOT NULL,
                     job_name TEXT NOT NULL,
                     status TEXT DEFAULT 'pending_form',
+                    service_type TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(user_id) REFERENCES users(user_id),
                     UNIQUE(user_id, job_name)
@@ -70,10 +72,12 @@ def init_db():
                 CREATE INDEX IF NOT EXISTS idx_user_jobs_status ON user_jobs(status);
             """))
 
+            # Table for menores service submissions
             conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS form_submissions (
+                CREATE TABLE IF NOT EXISTS menores_submissions (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT NOT NULL,
+                    job_name TEXT NOT NULL,
                     volume_page_number TEXT,
                     password TEXT,
                     child1_identifier TEXT,
@@ -85,9 +89,25 @@ def init_db():
                     child3_identifier TEXT,
                     child3_name TEXT,
                     child3_birth_date TEXT,
-                    job_name TEXT,
-                    preferred_date TEXT,  
-                    service_type TEXT DEFAULT 'menores',
+                    preferred_date TEXT,
+                    submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(user_id) REFERENCES users(user_id)
+                );
+            """))
+
+            # Table for certificate service submissions
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS certificate_submissions (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    job_name TEXT NOT NULL,
+                    carne_identidad TEXT,
+                    contrasena TEXT,
+                    tomo TEXT,
+                    pagina TEXT,
+                    visado_mark TEXT DEFAULT 'x',
+                    preferred_date TEXT,
+                    cert_type TEXT,  -- 'nacimiento' or 'dni'
                     submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(user_id) REFERENCES users(user_id)
                 );

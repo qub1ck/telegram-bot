@@ -174,6 +174,7 @@ def _send_search_start_message(chat_id, job_name):
     except requests.RequestException as e:
         logger.error(f"Failed to send search start message: {e}")
 
+
 @app.route("/submit-form", methods=["POST"])
 def handle_form_submission():
     """Robust form submission handler with comprehensive validation and processing."""
@@ -185,6 +186,7 @@ def handle_form_submission():
         # Validate critical parameters
         chat_id = data.get("chat_id")
         job_name = data.get("job_name")
+        service_type = data.get("service_type", "menores")
 
         if not chat_id or not job_name:
             logger.error(f"Missing parameters: chat_id={chat_id}, job_name={job_name}")
@@ -192,6 +194,7 @@ def handle_form_submission():
 
         # Create a mapping for form field names to database column names
         field_mapping = {
+            # Standard menores fields
             'volumePageNumber': 'volume_page_number',
             'password': 'password',
             'child1Identifier': 'child1_identifier',
@@ -203,6 +206,13 @@ def handle_form_submission():
             'child3Identifier': 'child3_identifier',
             'child3Name': 'child3_name',
             'child3BirthDate': 'child3_birth_date',
+
+            # Certificate fields
+            'carneIdentidad': 'carne_identidad',
+            'contrasena': 'contrasena',
+            'tomo': 'tomo',
+            'pagina': 'pagina',
+            'visado_mark': 'visado_mark',
         }
 
         # Transform form data using the mapping
@@ -210,12 +220,15 @@ def handle_form_submission():
         for key, value in data.items():
             if key in field_mapping:
                 user_input[field_mapping[key]] = value
-            elif key.lower() not in ['chat_id', 'job_name']:
+            elif key.lower() not in ['chat_id', 'job_name', 'service_type']:
                 # For any fields not in our mapping, use the original transformation
                 user_input[key.lower().replace(" ", "_")] = value
 
+        # Add service type
+        user_input['service_type'] = service_type
+
         # Log the transformed data for debugging (excluding password)
-        safe_input = {k: v for k, v in user_input.items() if k != 'password'}
+        safe_input = {k: v for k, v in user_input.items() if k not in ['password', 'contrasena']}
         logger.info(f"Transformed form data: {safe_input}")
 
         # Quick user upsert to ensure user exists
@@ -254,36 +267,76 @@ def get_form_data():
             logger.error(f"Missing required parameters: chat_id={chat_id}, job_name={job_name}")
             return jsonify({"status": "error", "message": "Missing required parameters"}), 400
 
-        # Query the database for form data
+        # First get the service type from the user_jobs table
         with SessionLocal() as session:
-            result = session.execute(text("""
-                SELECT volume_page_number, password, 
-                       child1_identifier, child1_name, child1_birth_date,
-                       child2_identifier, child2_name, child2_birth_date,
-                       child3_identifier, child3_name, child3_birth_date
-                FROM form_submissions
+            service_type_result = session.execute(text("""
+                SELECT service_type FROM user_jobs
                 WHERE user_id = :user_id AND job_name = :job_name
-                ORDER BY submitted_at DESC
                 LIMIT 1
             """), {"user_id": chat_id, "job_name": job_name}).fetchone()
 
-            if not result:
-                return jsonify({"status": "error", "message": "No form data found"}), 404
+            if not service_type_result:
+                return jsonify({"status": "error", "message": "No job found"}), 404
 
-            # Create a dictionary from the result
-            form_data = {
-                "volume_page_number": result[0],
-                "password": result[1],
-                "child1_identifier": result[2],
-                "child1_name": result[3],
-                "child1_birth_date": result[4],
-                "child2_identifier": result[5],
-                "child2_name": result[6],
-                "child2_birth_date": result[7],
-                "child3_identifier": result[8],
-                "child3_name": result[9],
-                "child3_birth_date": result[10]
-            }
+            service_type = service_type_result[0]
+
+            if service_type == "menores":
+                # Query for menores service data
+                result = session.execute(text("""
+                    SELECT volume_page_number, password, 
+                           child1_identifier, child1_name, child1_birth_date,
+                           child2_identifier, child2_name, child2_birth_date,
+                           child3_identifier, child3_name, child3_birth_date,
+                           preferred_date
+                    FROM menores_submissions
+                    WHERE user_id = :user_id AND job_name = :job_name
+                    ORDER BY submitted_at DESC
+                    LIMIT 1
+                """), {"user_id": chat_id, "job_name": job_name}).fetchone()
+
+                if not result:
+                    return jsonify({"status": "error", "message": "No form data found"}), 404
+
+                # Create a dictionary from the result
+                form_data = {
+                    "volume_page_number": result[0],
+                    "password": result[1],
+                    "child1_identifier": result[2],
+                    "child1_name": result[3],
+                    "child1_birth_date": result[4],
+                    "child2_identifier": result[5],
+                    "child2_name": result[6],
+                    "child2_birth_date": result[7],
+                    "child3_identifier": result[8],
+                    "child3_name": result[9],
+                    "child3_birth_date": result[10],
+                    "preferred_date": result[11],
+                    "service_type": service_type
+                }
+            else:
+                # Query for certificate service data
+                result = session.execute(text("""
+                    SELECT carne_identidad, contrasena, tomo, pagina, visado_mark, preferred_date, cert_type
+                    FROM certificate_submissions
+                    WHERE user_id = :user_id AND job_name = :job_name
+                    ORDER BY submitted_at DESC
+                    LIMIT 1
+                """), {"user_id": chat_id, "job_name": job_name}).fetchone()
+
+                if not result:
+                    return jsonify({"status": "error", "message": "No form data found"}), 404
+
+                # Create a dictionary from the result
+                form_data = {
+                    "carne_identidad": result[0],
+                    "contrasena": result[1],
+                    "tomo": result[2],
+                    "pagina": result[3],
+                    "visado_mark": result[4],
+                    "preferred_date": result[5],
+                    "cert_type": result[6],
+                    "service_type": service_type
+                }
 
             # Return the form data
             return jsonify({
