@@ -115,21 +115,36 @@ async def check_appointments_async(service_option: str, preferred_date: Optional
     Returns:
         List of available dates or None if no dates are available
     """
+    # Add a timeout to the entire operation
+    try:
+        return await asyncio.wait_for(_check_appointments_impl(service_option, preferred_date), timeout=180)
+    except asyncio.TimeoutError:
+        logger.warning(f"Complete appointment check timed out for {service_option}")
+        return None
+    except Exception as e:
+        logger.error(f"Global error in appointment check: {e}")
+        logger.error(traceback.format_exc())
+        return None
+
+
+async def _check_appointments_impl(service_option: str, preferred_date: Optional[str] = None) -> Optional[List[str]]:
     logger.info(f"Checking appointments for service: {service_option}")
 
     # Initialize proxy manager
     proxy_manager = ProxyManager()
     max_attempts = 5
+    current_attempt = 0
 
-    for attempt in range(max_attempts):
+    while current_attempt < max_attempts:
         # Get a proxy for this attempt (first attempt is without proxy)
-        proxy_options = await proxy_manager.get_proxy() if attempt > 0 else None
+        proxy_options = await proxy_manager.get_proxy() if current_attempt > 0 else None
 
         browser = None
         context = None
 
         try:
-            logger.info(f"Attempt {attempt + 1}/{max_attempts} {'with proxy' if proxy_options else 'without proxy'}")
+            logger.info(
+                f"Attempt {current_attempt + 1}/{max_attempts} {'with proxy' if proxy_options else 'without proxy'}")
 
             async with async_playwright() as p:
                 # Launch browser with proxy if provided
@@ -204,19 +219,29 @@ async def check_appointments_async(service_option: str, preferred_date: Optional
             if proxy_options:
                 proxy_manager.mark_proxy_failed(proxy_options)
         finally:
-            # Clean up resources
-            if context:
-                await context.close()
-            if browser:
-                await browser.close()
+            # Clean up resources with error handling
+            try:
+                if context:
+                    await context.close()
+            except Exception as cleanup_error:
+                logger.warning(f"Error during context cleanup: {cleanup_error}")
+
+            try:
+                if browser:
+                    await browser.close()
+            except Exception as cleanup_error:
+                logger.warning(f"Error during browser cleanup: {cleanup_error}")
 
             # Add some random delay between attempts
-            if attempt < max_attempts - 1:
+            if current_attempt < max_attempts - 1:
                 delay = random.uniform(1.0, 5.0)
                 await asyncio.sleep(delay)
 
+            # Increment attempt counter
+            current_attempt += 1
+
     # If we've exhausted all attempts
-    logger.error(f"Failed to check appointments after {max_attempts} attempts")
+    logger.error(f"Failed to check appointments after {current_attempt} attempts")
     return None
 
 
