@@ -316,12 +316,12 @@ async def handle_option(update: Update, context: CallbackContext):
 
     if 'pending_job' in context.user_data:
         # User has provided a name for the appointment
-        user_provided_name = update.message.text
+        user_provided_name = update.message.text.strip()
         selected_option = context.user_data['pending_job']  # Retrieve the original option text
         form_option = context.user_data.get('form_option')  # Get the form option
         service_type = context.user_data.get('service_type', 'menores')  # Get service type
 
-        # Format the job name based on the service type
+        # Format the job name based on the service type - use normal string formatting without URL encoding
         if service_type == "certificate":
             # For certificate options, format as "Name, Certificate Type"
             job_name = f"{user_provided_name}, {selected_option}"
@@ -329,7 +329,7 @@ async def handle_option(update: Update, context: CallbackContext):
             # For menores options, format as before
             job_name = f"{user_provided_name}, {selected_option.split()[-2]} {selected_option.split()[-1]}"
 
-        # Store this for the registration form
+        # Store this for the registration form - ensure it's a normal string without URL encoding
         context.user_data['pending_job_name'] = job_name
 
         # Check if the name is already in use (case-insensitive)
@@ -358,10 +358,14 @@ async def handle_option(update: Update, context: CallbackContext):
         # Send registration form link
         if form_option:
             chat_id = update.message.chat_id
+            from urllib.parse import quote
+            # Properly encode the job name for a URL
+            encoded_job_name = quote(job_name)
+
             if form_option == "certificate":
-                form_url = f"{GITHUB_PAGES_URL}/certificate_option.html?chat_id={chat_id}&job_name={job_name}"
+                form_url = f"{GITHUB_PAGES_URL}/certificate_option.html?chat_id={chat_id}&job_name={encoded_job_name}"
             else:
-                form_url = f"{GITHUB_PAGES_URL}/{form_option}_option.html?chat_id={chat_id}&job_name={job_name}"
+                form_url = f"{GITHUB_PAGES_URL}/{form_option}_option.html?chat_id={chat_id}&job_name={encoded_job_name}"
 
             keyboard = [[InlineKeyboardButton("Fill Registration Form", url=form_url)]]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -444,7 +448,6 @@ async def check_dates_continuously(context: CallbackContext):
     """Optimized background job for checking appointment dates."""
     job_data = context.job.data
     chat_id = job_data['chat_id']
-    user_choice = job_data['user_choice']
     user_id = job_data['user_id']
     job_name = job_data['job_name']
 
@@ -459,8 +462,9 @@ async def check_dates_continuously(context: CallbackContext):
             return
 
         # Get service type
+        from sqlalchemy import text as sql_text
         with SessionLocal() as session:
-            service_type_result = session.execute(text("""
+            service_type_result = session.execute(sql_text("""
                 SELECT service_type FROM user_jobs
                 WHERE user_id = :user_id AND job_name = :job_name
                 LIMIT 1
@@ -505,12 +509,18 @@ async def check_dates_continuously(context: CallbackContext):
                 job_data['preferred_date_asked'] = True
 
         # Determine the correct service option based on service type
-        appointment_option = user_choice
-        if service_type == "certificate":
-            if "Nacimiento para DNI" in job_name:
+        if service_type == "menores":
+            # For menores services
+            option_part = job_name.split(", ")[-1]  # Extract "1 HIJO", "2 HIJOS", etc.
+            appointment_option = f"INSCRIPCIÓN MENORES LEY36 OPCIÓN {option_part}"
+        else:
+            # For certificate services
+            if "para DNI" in job_name:
                 appointment_option = "Solicitar certificación de Nacimiento para DNI"
             else:
                 appointment_option = "Solicitar certificación de Nacimiento"
+
+        logger.info(f"Checking appointments for {appointment_option}")
 
         # Time-boxed appointment checking
         try:
@@ -525,9 +535,9 @@ async def check_dates_continuously(context: CallbackContext):
         if available_dates and len(available_dates) > 0:
             # Get the service type description for the notification
             service_description = "unknown service"
-            if "INSCRIPCIÓN MENORES" in appointment_option:
+            if service_type == "menores":
                 service_description = "Reservar Cita de Menores Ley 36"
-            elif "para DNI" in appointment_option:
+            elif "para DNI" in job_name:
                 service_description = "Solicitar certificación de Nacimiento para DNI"
             else:
                 service_description = "Solicitar certificación de Nacimiento"
@@ -542,7 +552,7 @@ async def check_dates_continuously(context: CallbackContext):
             was_auto_selected = any("SELECTED" in date for date in available_dates)
             was_closest = any("CLOSEST AVAILABLE" in date for date in available_dates)
 
-            # Format the message differently depending on whether a date was auto-selected
+            # Format the detailed message
             if was_auto_selected:
                 selected_date = next(date for date in available_dates if "SELECTED" in date)
                 formatted_message = (
@@ -561,7 +571,6 @@ async def check_dates_continuously(context: CallbackContext):
                 if other_dates:
                     formatted_message += "\n\nOther available dates:\n• " + "\n• ".join(other_dates)
             else:
-                # Format the message for all available dates
                 formatted_dates = "\n• ".join(available_dates)
                 formatted_message = (
                     f"✅ AVAILABLE DATES FOUND for {job_name}:\n\n"
@@ -596,12 +605,6 @@ async def check_dates_continuously(context: CallbackContext):
 
     except Exception as e:
         logger.error(f"Background job error for user {chat_id}: {e}")
-        '''        
-        await context.bot.send_message(
-            chat_id, 
-            "Service temporarily unavailable. The search will continue automatically."
-        )
-        '''
 
 
 async def handle_preferred_date(update: Update, context: CallbackContext):

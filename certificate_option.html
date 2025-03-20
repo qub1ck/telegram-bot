@@ -114,15 +114,18 @@
         const jobName = urlParams.get('job_name');
         const prefill = urlParams.get('prefill') === 'true';
 
+        // Decode the job_name to handle URL-encoded characters
+        const decodedJobName = jobName ? decodeURIComponent(jobName) : '';
+
         // Validate required parameters
-        if (!chatId || !jobName) {
+        if (!chatId || !decodedJobName) {
             alert('Missing required parameters. Please return to the bot and restart the process.');
             window.close();
             return;
         }
 
         document.getElementById('chat_id').value = chatId;
-        document.getElementById('job_name').value = jobName;
+        document.getElementById('job_name').value = decodedJobName;
 
         // Set the minimum date to today
         const today = new Date().toISOString().split('T')[0];
