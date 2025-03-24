@@ -401,58 +401,62 @@ async def handle_option(update: Update, context: CallbackContext):
 async def handle_cancel_job(update: Update, context: CallbackContext):
     """Handle the callback query for canceling a job."""
     query = update.callback_query
-    await query.answer()  # Acknowledge the callback query
+    await query.answer()  # Acknowledge the callback query immediately
 
     user_id = query.from_user.id
     callback_data = query.data
 
-    # Show cancellation in progress message
-    status_message = await query.edit_message_text("Canceling appointment search...")
+    # Pause all ongoing searches for this user
+    paused_jobs = await pause_user_searches(context, user_id)
+    
+    # Show that we received the request
+    status_message = await query.edit_message_text("Processing cancellation request...")
 
     try:
         if callback_data == "cancel_all":
             # Cancel all appointments for the user
             user_jobs = await get_user_jobs(user_id)
-            if not user_jobs:
-                await status_message.edit_text("You don't have any active searches to cancel.")
-                return
-                
-            job_count = len(user_jobs)
-            await status_message.edit_text(f"Canceling {job_count} appointment searches...")
-            
             for job in user_jobs:
-                # Remove from database
                 await remove_user_job(user_id, job)
-                
                 # Remove the background job
                 job_name_to_cancel = f"check_dates_{user_id}_{job}"
                 existing_jobs = context.job_queue.get_jobs_by_name(job_name_to_cancel)
                 if existing_jobs:
-                    for job_instance in existing_jobs:
-                        job_instance.schedule_removal()
+                    for job in existing_jobs:
+                        job.schedule_removal()
             
-            await status_message.edit_text(f"Successfully canceled all {job_count} appointment searches.")
+            await status_message.edit_text("All appointments have been canceled.")
         else:
             # Cancel a specific appointment
             job_name = callback_data.replace("cancel_", "")
-            
-            # Remove from database
             await remove_user_job(user_id, job_name)
-            await status_message.edit_text(f"Canceled search for {job_name}.")
-
+            
             # Remove the background job
             job_name_to_cancel = f"check_dates_{user_id}_{job_name}"
             existing_jobs = context.job_queue.get_jobs_by_name(job_name_to_cancel)
             if existing_jobs:
                 for job in existing_jobs:
                     job.schedule_removal()
-                logger.info(f"Removed {len(existing_jobs)} background jobs for {job_name_to_cancel}")
+            
+            await status_message.edit_text(f"Search for {job_name} has been canceled.")
+
+        # Don't resume jobs that were just canceled
+        if callback_data == "cancel_all":
+            paused_jobs = []  # Don't resume any jobs
+        else:
+            # Remove the canceled job from paused jobs
+            job_name = callback_data.replace("cancel_", "")
+            job_name_to_cancel = f"check_dates_{user_id}_{job_name}"
+            paused_jobs = [job for job in paused_jobs if job['name'] != job_name_to_cancel]
     
     except Exception as e:
-        logger.error(f"Error in handle_cancel_job: {str(e)}")
-        await status_message.edit_text(f"Error while canceling: {str(e)}")
+        logger.error(f"Error in cancellation task: {str(e)}")
+        await status_message.edit_text(f"Error during cancellation: {str(e)}")
+        # Resume jobs on error
+        await resume_user_searches(context, user_id, paused_jobs)
+        return
 
-    # Create a fake Update object with a valid Message and User for showing options
+    # Create a fake Update object with a valid Message and User
     fake_message = Message(
         message_id=0,
         date=None,
@@ -463,6 +467,9 @@ async def handle_cancel_job(update: Update, context: CallbackContext):
 
     # Show options after canceling the job(s)
     await query.message.reply_text("Please choose an option:", reply_markup=await show_options(fake_update, context))
+    
+    # Resume remaining jobs that weren't canceled
+    await resume_user_searches(context, user_id, paused_jobs)
 
 
 async def check_dates_continuously(context: CallbackContext):
@@ -756,52 +763,107 @@ async def handle_set_date_job_selection(update: Update, context: CallbackContext
 async def handle_check_appointments(update: Update, context: CallbackContext):
     """Handle the callback query for checking appointments."""
     query = update.callback_query
-    await query.answer()  # Acknowledge the callback query
+    await query.answer()  # Acknowledge the callback query immediately
 
     user_id = query.from_user.id
     callback_data = query.data
 
-    # First, inform the user that checking has started
-    status_message = await query.message.reply_text("Starting appointment check... This may take a moment.")
+    # Pause all ongoing searches for this user
+    paused_jobs = await pause_user_searches(context, user_id)
+    
+    # Show that we received the request
+    status_message = await query.edit_message_text("Processing check request...")
 
     try:
         if callback_data == "check_all":
             # Check all appointments
             user_jobs = await get_user_jobs(user_id)
-            
             if not user_jobs:
-                await status_message.edit_text("You don't have any active appointments to check.")
+                await status_message.edit_text("No active searches to check.")
+                # Nothing to check, resume jobs and return
+                await resume_user_searches(context, user_id, paused_jobs)
                 return
-                
-            await status_message.edit_text(f"Checking {len(user_jobs)} appointments. Please wait...")
+
+            await status_message.edit_text(f"Checking {len(user_jobs)} appointments...")
             
             results = []
             for job in user_jobs:
-                # Update status message to keep user informed
-                await status_message.edit_text(f"Checking appointment: {job}...")
-                
-                # Get the service type for this job
+                try:
+                    # Update status to show progress
+                    await status_message.edit_text(f"Checking appointment: {job}...")
+                    
+                    # Get the service type
+                    with SessionLocal() as session:
+                        service_type_result = session.execute(text("""
+                            SELECT service_type FROM user_jobs
+                            WHERE user_id = :user_id AND job_name = :job_name
+                            LIMIT 1
+                        """), {"user_id": user_id, "job_name": job}).fetchone()
+
+                        if not service_type_result:
+                            results.append(f"❌ {job}: Job not found")
+                            continue
+
+                        service_type = service_type_result[0]
+
+                    # Determine appointment option
+                    if service_type == "menores":
+                        original_option = job.split(", ")[-1]
+                        original_option_text = f"INSCRIPCIÓN MENORES LEY36 OPCIÓN {original_option}"
+                    else:
+                        if "para DNI" in job:
+                            original_option_text = "Solicitar certificación de Nacimiento para DNI"
+                        else:
+                            original_option_text = "Solicitar certificación de Nacimiento"
+
+                    # Use a single attempt with timeout
+                    try:
+                        available_dates = await asyncio.wait_for(
+                            check_appointments_async(original_option_text, max_attempts=1), 
+                            timeout=15
+                        )
+                        
+                        if available_dates:
+                            results.append(f"✅ {job}: {', '.join(available_dates)}")
+                        else:
+                            results.append(f"❌ {job}: No available dates")
+                    except asyncio.TimeoutError:
+                        results.append(f"⚠️ {job}: Check timed out")
+                    except Exception as e:
+                        results.append(f"⚠️ {job}: Error - {str(e)}")
+                except Exception as e:
+                    results.append(f"⚠️ {job}: Error - {str(e)}")
+
+            # Send final results
+            await status_message.edit_text("Appointment check completed.\n\n" + "\n".join(results))
+        else:
+            # Check a specific appointment
+            job_name = callback_data.replace("check_", "")
+            await status_message.edit_text(f"Checking appointment for {job_name}...")
+
+            try:
+                # Get the service type
                 with SessionLocal() as session:
                     service_type_result = session.execute(text("""
                         SELECT service_type FROM user_jobs
                         WHERE user_id = :user_id AND job_name = :job_name
                         LIMIT 1
-                    """), {"user_id": user_id, "job_name": job}).fetchone()
+                    """), {"user_id": user_id, "job_name": job_name}).fetchone()
 
                     if not service_type_result:
-                        results.append(f"❌ {job}: Job not found in database")
-                        continue
+                        await status_message.edit_text(f"Job {job_name} not found.")
+                        # Job not found, resume other jobs and return
+                        await resume_user_searches(context, user_id, paused_jobs)
+                        return
 
                     service_type = service_type_result[0]
 
-                # Determine the appointment option based on service type
+                # Determine appointment option
                 if service_type == "menores":
-                    # Extract the original option text from the job name
-                    original_option = job.split(", ")[-1]  # e.g., "1 HIJO"
+                    original_option = job_name.split(", ")[-1]
                     original_option_text = f"INSCRIPCIÓN MENORES LEY36 OPCIÓN {original_option}"
                 else:
-                    # For certificate services
-                    if "para DNI" in job:
+                    if "para DNI" in job_name:
                         original_option_text = "Solicitar certificación de Nacimiento para DNI"
                     else:
                         original_option_text = "Solicitar certificación de Nacimiento"
@@ -809,78 +871,42 @@ async def handle_check_appointments(update: Update, context: CallbackContext):
                 # Use a single attempt with timeout
                 try:
                     available_dates = await asyncio.wait_for(
-                        check_appointments_async(original_option_text, max_attempts=1), 
-                        timeout=30
+                        check_appointments_async(original_option_text, max_attempts=1),
+                        timeout=15
                     )
                     
                     if available_dates:
-                        results.append(f"✅ {job}: {', '.join(available_dates)}")
+                        await status_message.edit_text(f"✅ Available dates found for {job_name}:\n\n{', '.join(available_dates)}")
                     else:
-                        results.append(f"❌ {job}: No available dates")
+                        await status_message.edit_text(f"❌ No available dates found for {job_name}.")
                 except asyncio.TimeoutError:
-                    results.append(f"⚠️ {job}: Check timed out")
+                    await status_message.edit_text(f"⚠️ Check timed out for {job_name}.")
                 except Exception as e:
-                    logger.error(f"Error checking job {job}: {str(e)}")
-                    results.append(f"⚠️ {job}: Error during check")
-            
-            # Send results as a single message
-            await status_message.edit_text("Appointment check completed.\n\n" + "\n".join(results))
-        
-        else:
-            # Check a specific appointment
-            job_name = callback_data.replace("check_", "")
-            await status_message.edit_text(f"Checking appointment: {job_name}...")
-
-            # Get the service type for this job
-            with SessionLocal() as session:
-                service_type_result = session.execute(text("""
-                    SELECT service_type FROM user_jobs
-                    WHERE user_id = :user_id AND job_name = :job_name
-                    LIMIT 1
-                """), {"user_id": user_id, "job_name": job_name}).fetchone()
-
-                if not service_type_result:
-                    await status_message.edit_text(f"Job {job_name} not found.")
-                    return
-
-                service_type = service_type_result[0]
-
-            # Determine the appointment option based on service type
-            if service_type == "menores":
-                # Extract the original option text from the job name
-                original_option = job_name.split(", ")[-1]  # e.g., "1 HIJO"
-                original_option_text = f"INSCRIPCIÓN MENORES LEY36 OPCIÓN {original_option}"
-            else:
-                # For certificate services
-                if "para DNI" in job_name:
-                    original_option_text = "Solicitar certificación de Nacimiento para DNI"
-                else:
-                    original_option_text = "Solicitar certificación de Nacimiento"
-
-            # Use a single attempt with timeout
-            try:
-                available_dates = await asyncio.wait_for(
-                    check_appointments_async(original_option_text, max_attempts=1),
-                    timeout=30
-                )
-                
-                if available_dates:
-                    await status_message.edit_text(f"✅ Available dates found for {job_name}:\n\n{', '.join(available_dates)}")
-                else:
-                    await status_message.edit_text(f"❌ No available dates found for {job_name}.")
-            except asyncio.TimeoutError:
-                await status_message.edit_text(f"⚠️ Check timed out for {job_name}.")
+                    await status_message.edit_text(f"⚠️ Error checking {job_name}: {str(e)}")
             except Exception as e:
-                logger.error(f"Error checking job {job_name}: {str(e)}")
-                await status_message.edit_text(f"⚠️ Error checking {job_name}.")
+                await status_message.edit_text(f"Error checking {job_name}: {str(e)}")
     
     except Exception as e:
-        logger.error(f"Error in handle_check_appointments: {str(e)}")
-        await status_message.edit_text("An error occurred while checking appointments.")
+        logger.error(f"Error in check task: {str(e)}")
+        await status_message.edit_text(f"Error during check: {str(e)}")
+        # Resume jobs on error
+        await resume_user_searches(context, user_id, paused_jobs)
+        return
+
+    # Create a fake Update object with a valid Message and User
+    fake_message = Message(
+        message_id=0,
+        date=None,
+        chat=Chat(id=query.message.chat_id, type='private'),
+        from_user=query.from_user
+    )
+    fake_update = Update(update_id=0, message=fake_message)
+
+    # Show options after checking the job(s)
+    await query.message.reply_text("Please choose an option:", reply_markup=await show_options(fake_update, context))
     
-    finally:
-        # Always return to the main menu
-        await query.message.reply_text("Please choose an option:", reply_markup=await show_options(update, context))
+    # Resume jobs after check is complete
+    await resume_user_searches(context, user_id, paused_jobs)
 
 
 async def restart_active_jobs(app: Application):
@@ -1000,6 +1026,53 @@ async def check_for_new_jobs(context: CallbackContext):
     except Exception as e:
         logger.error(f"Error in job checking process: {e}")
         logger.error(f"Traceback: {traceback.format_exc()}")
+
+
+async def pause_user_searches(context, user_id):
+    """Pause all ongoing searches for a user and return their data for later resuming."""
+    user_job_pattern = f"check_dates_{user_id}_"
+    paused_jobs = []
+    
+    # Find all active jobs for this user
+    active_jobs = context.job_queue.get_jobs_by_name(None)  # Get all jobs
+    for job in active_jobs:
+        if job.name and job.name.startswith(user_job_pattern):
+            # Save job data for resuming later
+            job_data = {
+                'name': job.name,
+                'data': job.data,
+                'interval': job.interval,
+                'repeat': job.job_kwargs.get('repeat', True)
+            }
+            paused_jobs.append(job_data)
+            
+            # Remove the job temporarily
+            job.schedule_removal()
+            logger.info(f"Paused job: {job.name}")
+    
+    logger.info(f"Paused {len(paused_jobs)} search jobs for user {user_id}")
+    return paused_jobs
+
+
+async def resume_user_searches(context, user_id, paused_jobs):
+    """Resume previously paused searches for a user."""
+    if not paused_jobs:
+        logger.info(f"No jobs to resume for user {user_id}")
+        return
+    
+    # Restart each paused job
+    for job_data in paused_jobs:
+        context.job_queue.run_repeating(
+            check_dates_continuously,
+            interval=job_data['interval'],
+            first=5,  # Start 5 seconds after resuming
+            data=job_data['data'],
+            name=job_data['name'],
+            job_kwargs={'max_instances': 1}
+        )
+        logger.info(f"Resumed job: {job_data['name']}")
+    
+    logger.info(f"Resumed {len(paused_jobs)} search jobs for user {user_id}")
 
 
 async def on_startup(app: Application):
