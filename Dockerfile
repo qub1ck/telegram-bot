@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     python3-dev \
-    tor  # Add Tor installation here
+    tor
 
 # Ensure pip is up to date
 RUN python3 -m pip install --upgrade pip
@@ -34,8 +34,8 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ENV PYTHONUNBUFFERED=1
 ENV PATH="/usr/bin:${PATH}"
 
+# Create directory for Tor data
+RUN mkdir -p /app/tor_data && chmod 700 /app/tor_data
+
 # Verify Python installation
 RUN python3 --version && pip3 --version
-
-# Default command
-CMD ["python3", "main.py"]

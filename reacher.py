@@ -6,8 +6,7 @@ import os
 import subprocess
 import time
 from datetime import datetime
-from functools import lru_cache
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional, Dict
 from playwright.async_api import async_playwright, TimeoutError
 
 logging.basicConfig(
@@ -36,21 +35,25 @@ class TorManager:
         self.control_port = 9051
         self.tor_password = "appointment_checker"
         self._setup_done = False
+        self.tor_data_dir = os.path.join(os.getcwd(), "tor_data")
     
     async def setup(self):
         if self._setup_done:
             return True
             
         try:
-            tor_installed = subprocess.run(["which", "tor"], capture_output=True).returncode == 0
-            self.tor_data_dir = os.path.join(os.getcwd(), "tor_data")
+            # Create data directory
             os.makedirs(self.tor_data_dir, exist_ok=True)
+            
+            tor_installed = subprocess.run(["which", "tor"], capture_output=True).returncode == 0
             
             if not tor_installed:
                 logger.error("Tor is not installed. Please install Tor: 'apt-get install tor' or equivalent")
                 return False
                 
-            with open("temp_torrc", "w") as f:
+            # Create a simple torrc config file
+            torrc_path = os.path.join(os.getcwd(), "temp_torrc")
+            with open(torrc_path, "w") as f:
                 f.write(f"""
                 SocksPort {self.socks_port}
                 ControlPort {self.control_port}
@@ -60,11 +63,12 @@ class TorManager:
             
             logger.info("Starting Tor...")
             self.tor_process = subprocess.Popen(
-                ["tor", "-f", "temp_torrc"],
+                ["tor", "-f", torrc_path],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )
             
+            # Wait for Tor to start up
             await self._wait_for_tor_startup()
             
             self._setup_done = True
@@ -131,111 +135,33 @@ class TorManager:
             self._setup_done = False
 
 
-class ProxyManager:
-    def __init__(self, proxy_file: str = "proxy.txt"):
-        self.proxy_file = proxy_file
-        self.proxies: List[Tuple[str, int]] = []
-        self.used_proxies: List[Tuple[str, int]] = []
-        self.failed_proxies: Dict[Tuple[str, int], int] = {}
-        self.proxy_username = "vqytkifr"
-        self.proxy_password = "x90e6lupyath"
+class TorProxyManager:
+    def __init__(self):
         self.tor_manager = TorManager()
-        self.use_tor = False  # Default to not using Tor unless explicitly enabled
-
+        self.tor_ready = False
+        
     async def initialize(self):
-        if self.use_tor:
-            tor_ready = await self.tor_manager.setup()
-            if not tor_ready:
-                logger.warning("Failed to setup Tor. Falling back to regular proxies.")
-                self.use_tor = False
-
-    async def load_proxies(self) -> List[Tuple[str, int]]:
-        try:
-            with open(self.proxy_file, "r") as f:
-                content = f.read()
-                proxies = []
-                for line in content.strip().split('\n'):
-                    if ':' in line:
-                        host, port = line.strip().split(':')
-                        proxies.append((host, int(port)))
-            logger.info(f"Loaded {len(proxies)} proxies")
-            return proxies
-        except FileNotFoundError:
-            logger.error(f"Proxies file {self.proxy_file} not found")
-            return []
-        except Exception as e:
-            logger.error(f"Error loading proxies: {e}")
-            return []
-
-    async def get_tor_proxy(self) -> Optional[Dict[str, str]]:
-        try:
-            await self.tor_manager.new_identity()
-            
-            return {
-                "server": "socks5://127.0.0.1:9050",
-            }
-        except Exception as e:
-            logger.error(f"Error getting Tor proxy: {e}")
-            return None
+        self.tor_ready = await self.tor_manager.setup()
+        if not self.tor_ready:
+            logger.error("Failed to initialize Tor. Appointments cannot be checked.")
+        return self.tor_ready
 
     async def get_proxy(self) -> Optional[Dict[str, str]]:
-        if self.use_tor:
-            tor_proxy = await self.get_tor_proxy()
-            if tor_proxy:
-                return tor_proxy
-            else:
-                logger.warning("Tor proxy unavailable, falling back to regular proxies")
-                self.use_tor = False
-        
-        if not self.proxies:
-            self.proxies = await self.load_proxies()
-            if not self.proxies:
-                logger.warning("No proxies available, proceeding without proxy")
+        if not self.tor_ready:
+            if not await self.initialize():
                 return None
-
-        good_proxies = [p for p in self.proxies if self.failed_proxies.get(p, 0) < 3]
-        if not good_proxies:
-            logger.warning("All proxies have excessive failures, no more proxies available")
-            return None
-
-        proxy = random.choice(good_proxies)
-        self.proxies.remove(proxy)
-        self.used_proxies.append(proxy)
-
-        return {
-            "server": f"{proxy[0]}:{proxy[1]}",
-            "username": self.proxy_username,
-            "password": self.proxy_password
-        }
-
-    def mark_proxy_failed(self, proxy: Dict[str, str]):
-        if not proxy:
-            return
-
-        server = proxy.get("server", "")
+                
+        # Request a new Tor identity
+        await self.tor_manager.new_identity()
         
-        if server.startswith("socks5://127.0.0.1:9050"):
-            logger.info("Tor circuit failed, will request new identity on next attempt")
-            return
-
-        if not server or ":" not in server:
-            return
-
-        host, port_str = server.split(":")
-        try:
-            port = int(port_str)
-            proxy_tuple = (host, port)
-            self.failed_proxies[proxy_tuple] = self.failed_proxies.get(proxy_tuple, 0) + 1
-            logger.info(f"Marked proxy {server} as failed (count: {self.failed_proxies[proxy_tuple]})")
-        except ValueError:
-            logger.error(f"Invalid port in proxy server: {server}")
+        return {
+            "server": "socks5://127.0.0.1:9050"
+        }
     
     async def cleanup(self):
-        if self.use_tor:
-            await self.tor_manager.stop()
+        await self.tor_manager.stop()
 
 
-@lru_cache
 async def check_appointments_async(service_option: str, preferred_date: Optional[str] = None, max_attempts: int = 5) -> Optional[List[str]]:
     try:
         return await asyncio.wait_for(_check_appointments_impl(service_option, preferred_date, max_attempts), timeout=180)
@@ -251,27 +177,34 @@ async def check_appointments_async(service_option: str, preferred_date: Optional
 async def _check_appointments_impl(service_option: str, preferred_date: Optional[str] = None, max_attempts: int = 5) -> Optional[List[str]]:
     logger.info(f"Checking appointments for service: {service_option}")
 
-    proxy_manager = ProxyManager()
-    await proxy_manager.initialize()
+    # Initialize the Tor proxy manager
+    proxy_manager = TorProxyManager()
+    if not await proxy_manager.initialize():
+        logger.error("Could not initialize Tor. Appointment checking aborted.")
+        return None
     
     current_attempt = 0
 
     try:
         while current_attempt < max_attempts:
-            use_proxy = current_attempt > 0 or proxy_manager.use_tor
-            proxy_options = await proxy_manager.get_proxy() if use_proxy else None
+            # Always use Tor proxy
+            proxy_options = await proxy_manager.get_proxy()
+            if not proxy_options:
+                logger.error("Failed to get Tor proxy. Skipping attempt.")
+                current_attempt += 1
+                continue
 
             browser = None
             context = None
 
             try:
-                logger.info(
-                    f"Attempt {current_attempt + 1}/{max_attempts} {'with ' + ('Tor' if proxy_options and 'socks5://127.0.0.1:9050' in proxy_options.get('server', '') else 'proxy') if proxy_options else 'without proxy'}")
+                logger.info(f"Attempt {current_attempt + 1}/{max_attempts} with Tor")
 
                 async with async_playwright() as p:
-                    browser_args = {"headless": True}
-                    if proxy_options:
-                        browser_args["proxy"] = proxy_options
+                    browser_args = {
+                        "headless": True,
+                        "proxy": proxy_options
+                    }
 
                     user_agents = [
                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
@@ -297,8 +230,10 @@ async def _check_appointments_impl(service_option: str, preferred_date: Optional
 
                     await page.evaluate("window.onbeforeunload = null;")
 
+                    # Handle alerts/dialogs automatically
                     page.on("dialog", lambda dialog: asyncio.create_task(dialog.accept()))
 
+                    # Navigation with retry logic
                     max_navigation_retries = 3
                     for nav_attempt in range(max_navigation_retries):
                         try:
@@ -310,6 +245,7 @@ async def _check_appointments_impl(service_option: str, preferred_date: Optional
                             logger.warning(f"Navigation retry {nav_attempt + 1}/{max_navigation_retries}: {str(nav_e)}")
                             await asyncio.sleep(2)
 
+                    # Handle service-specific flows
                     if "Solicitar certificación de Nacimiento" in service_option:
                         result = await handle_certificate_service(page, service_option, preferred_date)
                         if result is not None:
@@ -323,14 +259,11 @@ async def _check_appointments_impl(service_option: str, preferred_date: Optional
 
             except TimeoutError as e:
                 logger.error(f"Timeout error: {e}")
-                if proxy_options:
-                    proxy_manager.mark_proxy_failed(proxy_options)
             except Exception as e:
                 logger.error(f"Error checking appointments: {e}")
                 logger.error(traceback.format_exc())
-                if proxy_options:
-                    proxy_manager.mark_proxy_failed(proxy_options)
             finally:
+                # Clean up resources
                 try:
                     if context:
                         await context.close()
@@ -343,12 +276,14 @@ async def _check_appointments_impl(service_option: str, preferred_date: Optional
                 except Exception as cleanup_error:
                     logger.warning(f"Error during browser cleanup: {cleanup_error}")
 
+                # Add delay between attempts
                 if current_attempt < max_attempts - 1:
                     delay = random.uniform(1.0, 5.0)
                     await asyncio.sleep(delay)
 
                 current_attempt += 1
     finally:
+        # Always clean up Tor resources
         await proxy_manager.cleanup()
 
     logger.error(f"Failed to check appointments after {current_attempt} attempts")
