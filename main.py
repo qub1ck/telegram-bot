@@ -14,10 +14,8 @@ from bot_users import (
     get_preferred_date, update_preferred_date
 )
 from database import SessionLocal
-from reacher import check_appointments_async, ProxyManager
+from reacher import check_appointments_async
 from dotenv import load_dotenv
-
-ProxyManager.use_tor = True
 
 # Load environment variables
 load_dotenv()
