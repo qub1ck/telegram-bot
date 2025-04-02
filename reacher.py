@@ -5,6 +5,8 @@ import random
 import os
 import subprocess
 import time
+import hashlib
+import base64
 from datetime import datetime
 from typing import List, Optional, Dict
 from playwright.async_api import async_playwright, TimeoutError
@@ -33,9 +35,21 @@ class TorManager:
         self.tor_process = None
         self.socks_port = 9050
         self.control_port = 9051
-        self.tor_password = "appointment_checker"
+        self.tor_password = "appointment_checker"  # Plain text password
         self._setup_done = False
         self.tor_data_dir = os.path.join(os.getcwd(), "tor_data")
+    
+    def _get_password_hash(self):
+        """Generate a Tor control password hash."""
+        salt = os.urandom(8)
+        c = 96
+        password_bytes = self.tor_password.encode('utf-8')
+        result = password_bytes + salt
+        
+        for i in range(c):
+            result = hashlib.sha1(result).digest()
+            
+        return base64.b16encode(salt + result).decode('ascii')
     
     async def setup(self):
         if self._setup_done:
@@ -45,19 +59,24 @@ class TorManager:
             # Create data directory
             os.makedirs(self.tor_data_dir, exist_ok=True)
             
+            # Check if Tor is installed
             tor_installed = subprocess.run(["which", "tor"], capture_output=True).returncode == 0
             
             if not tor_installed:
                 logger.error("Tor is not installed. Please install Tor: 'apt-get install tor' or equivalent")
                 return False
                 
-            # Create a simple torrc config file
+            # Generate a password hash for Tor control authentication
+            # This ensures the hash matches the password we'll use
+            password_hash = self._get_password_hash()
+            
+            # Create a simple torrc config file with our generated hash
             torrc_path = os.path.join(os.getcwd(), "temp_torrc")
             with open(torrc_path, "w") as f:
                 f.write(f"""
                 SocksPort {self.socks_port}
                 ControlPort {self.control_port}
-                HashedControlPassword 16:872860B76453A77D60CA2BB8C1A7042072093276A3D701AD684053EC4C
+                HashedControlPassword 16:{password_hash}
                 DataDirectory {self.tor_data_dir}
                 """)
             
@@ -111,7 +130,13 @@ class TorManager:
                 from stem.control import Controller
                 
             with Controller.from_port(port=self.control_port) as controller:
-                controller.authenticate(password=self.tor_password)
+                # Use cookie authentication first as a fallback
+                try:
+                    controller.authenticate()
+                except stem.connection.MissingPassword:
+                    # If cookie auth fails, use password auth
+                    controller.authenticate(password=self.tor_password)
+                
                 controller.signal(Signal.NEWNYM)
                 logger.info("New Tor identity requested")
                 
