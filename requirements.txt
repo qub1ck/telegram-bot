@@ -29,3 +29,4 @@ uvicorn==0.29.0
 
 # Security
 certifi==2024.2.2
+stem==1.8.2

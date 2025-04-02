@@ -8,7 +8,8 @@ RUN apt-get update && apt-get install -y \
     gcc \
     python3 \
     python3-pip \
-    python3-dev
+    python3-dev \
+    tor  # Add Tor installation here
 
 # Ensure pip is up to date
 RUN python3 -m pip install --upgrade pip
@@ -18,6 +19,9 @@ COPY requirements.txt .
 
 # Install Python dependencies
 RUN python3 -m pip install -r requirements.txt
+
+# Add stem for Tor control
+RUN python3 -m pip install stem
 
 # Copy application code
 COPY . .
