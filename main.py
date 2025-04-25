@@ -16,6 +16,7 @@ from bot_users import (
 from database import SessionLocal
 from reacher import check_appointments_async
 from dotenv import load_dotenv
+from error_logger import log_error, send_user_friendly_message
 
 # Load environment variables
 load_dotenv()
@@ -451,7 +452,28 @@ async def handle_cancel_job(update: Update, context: CallbackContext):
     
     except Exception as e:
         logger.error(f"Error in cancellation task: {str(e)}")
-        await status_message.edit_text(f"Error during cancellation: {str(e)}")
+        
+        # Log error to monitoring bot
+        additional_info = {
+            "function": "handle_cancel_job",
+            "callback_data": callback_data
+        }
+        
+        # Get job name from callback data
+        job_name = callback_data.replace("cancel_", "") if callback_data != "cancel_all" else "all_jobs"
+        
+        # Get user name if available
+        user_name = None
+        if query.from_user:
+            user_name = query.from_user.first_name
+            
+        # Add to additional info
+        additional_info["user_name"] = user_name
+        log_error(user_id, str(e), job_name, additional_info)
+        
+        # Send a generic message to the user
+        await status_message.edit_text("I encountered an issue while processing your cancellation request. Please try again later.")
+        
         # Resume jobs on error
         await resume_user_searches(context, user_id, paused_jobs)
         return
@@ -632,7 +654,33 @@ async def check_dates_continuously(context: CallbackContext):
             logger.info(f"No available dates for user {chat_id}")
 
     except Exception as e:
+        # Replace existing error handling with this
         logger.error(f"Background job error for user {chat_id}: {e}")
+        
+        # Get service type for more specific user messaging
+        service_type = None
+        try:
+            with SessionLocal() as session:
+                service_type_result = session.execute(text("""
+                    SELECT service_type FROM user_jobs
+                    WHERE user_id = :user_id AND job_name = :job_name
+                    LIMIT 1
+                """), {"user_id": user_id, "job_name": job_name}).fetchone()
+                
+                if service_type_result:
+                    service_type = service_type_result[0]
+        except:
+            pass
+            
+        # Get additional context for error logging
+        additional_info = {
+            "job_name": job_name,
+            "service_type": service_type if service_type else "unknown",
+            "function": "check_dates_continuously"
+        }
+        
+        # Log to monitoring bot
+        log_error(user_id, str(e), job_name, additional_info)
 
 
 async def handle_preferred_date(update: Update, context: CallbackContext):
@@ -888,7 +936,28 @@ async def handle_check_appointments(update: Update, context: CallbackContext):
     
     except Exception as e:
         logger.error(f"Error in check task: {str(e)}")
-        await status_message.edit_text(f"Error during check: {str(e)}")
+        
+        # Log error to monitoring bot
+        additional_info = {
+            "function": "handle_check_appointments",
+            "callback_data": callback_data
+        }
+        
+        # Get job name from callback data
+        job_name = callback_data.replace("check_", "") if callback_data != "check_all" else "all_jobs"
+        
+        # Get user name if available
+        user_name = None
+        if query.from_user:
+            user_name = query.from_user.first_name
+        
+        # Log error with user name included in additional info
+        additional_info["user_name"] = user_name
+        log_error(user_id, str(e), job_name, additional_info)
+        
+        # Send a generic message to the user
+        await status_message.edit_text("I encountered an issue while checking appointments. Please try again later.")
+        
         # Resume jobs on error
         await resume_user_searches(context, user_id, paused_jobs)
         return

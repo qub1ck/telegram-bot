@@ -9,6 +9,7 @@ import json
 import traceback
 from dotenv import load_dotenv
 from sqlalchemy import text
+from error_logger import log_error, send_user_friendly_message
 
 # Import the async database functions
 from bot_users import initialize_db, upsert_user, save_form_submission
@@ -138,13 +139,16 @@ def _send_telegram_message(chat_id, message):
 def _send_error_message(chat_id, error_text):
     """Send a standardized error message."""
     try:
-        requests.post(
-            TELEGRAM_API_URL, 
-            json={"chat_id": chat_id, "text": f"Error: {error_text}. Please try again."},
-            timeout=10
+        # Log error to monitoring bot instead of showing details to user
+        log_error(chat_id, error_text)
+        
+        # Send generic message to user
+        send_user_friendly_message(
+            TELEGRAM_BOT_TOKEN, 
+            chat_id
         )
     except requests.RequestException as e:
-        logger.error(f"Failed to send error message: {e}")
+        logger.error(f"Failed to handle error messaging: {e}")
 
 def _construct_submission_message(user_input):
     """Construct a safe submission message."""
