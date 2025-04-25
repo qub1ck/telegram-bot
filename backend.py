@@ -152,17 +152,26 @@ def _send_error_message(chat_id, error_text):
 
 def _construct_submission_message(user_input):
     """Construct a safe submission message."""
+    service_type = user_input.get('service_type', 'menores')
     message = "Form Submission Received:\n\n"
-    message += f"Parent Identifier:\nVolume Page Number: {user_input.get('volume_page_number', 'N/A')}\n\n"
     
-    # Dynamically handle children based on available data
-    for i in range(1, 4):
-        child_prefix = f"child{i}_"
-        if user_input.get(f"{child_prefix}name"):
-            message += f"Child {i}:\n"
-            message += f"Identifier: {user_input.get(f'{child_prefix}identifier', 'N/A')}\n"
-            message += f"Name: {user_input.get(f'{child_prefix}name', 'N/A')}\n"
-            message += f"Birth Date: {user_input.get(f'{child_prefix}birth_date', 'N/A')}\n\n"
+    if service_type == "menores":
+        message += f"Parent Identifier:\nVolume Page Number: {user_input.get('volume_page_number', 'N/A')}\n\n"
+        
+        # Dynamically handle children based on available data
+        for i in range(1, 4):
+            child_prefix = f"child{i}_"
+            if user_input.get(f"{child_prefix}name"):
+                message += f"Child {i}:\n"
+                message += f"Identifier: {user_input.get(f'{child_prefix}identifier', 'N/A')}\n"
+                message += f"Name: {user_input.get(f'{child_prefix}name', 'N/A')}\n"
+                message += f"Birth Date: {user_input.get(f'{child_prefix}birth_date', 'N/A')}\n\n"
+    else:
+        # Certificate service fields
+        message += f"Certificate Request Details:\n"
+        message += f"Carné de Identidad: {user_input.get('carne_identidad', 'N/A')}\n"
+        message += f"Tomo: {user_input.get('tomo', 'N/A')}\n"
+        message += f"Página: {user_input.get('pagina', 'N/A')}\n\n"
     
     message += "Registration form submitted successfully. Automatic search will start."
     return message
